@@ -1,0 +1,5 @@
+# Requires Python 3.10+.
+
+torch
+Pillow
+numpy
