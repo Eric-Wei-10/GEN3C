@@ -245,3 +245,8 @@ manifest.json
 wandb/
 onelogger.err
 onelogger.log
+
+# Others
+*.err
+*.out
+sbatch*.sh
