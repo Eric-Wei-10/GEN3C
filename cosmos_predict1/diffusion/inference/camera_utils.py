@@ -48,6 +48,7 @@ def look_at_matrix(camera_pos, target, invert_pos=True):
 def create_horizontal_trajectory(
     world_to_camera_matrix, center_depth, positive=True, n_steps=13, distance=0.1, device="cuda", axis="x", camera_rotation="center_facing"
 ):
+    print(f"center_depth = {center_depth}, distance = {distance}, n_step = {n_steps}")
     look_at = torch.tensor([0.0, 0.0, center_depth]).to(device)
     # Spiral motion key points
     trajectory = []
@@ -221,6 +222,38 @@ def generate_camera_trajectory(
 
     return generated_w2cs, generated_intrinsics
 
+# gemini: accept user-provided custom poses
+def format_custom_poses(user_c2w_list, intrinsics_matrix, device="cuda"):
+    """
+    Args:
+        user_c2w_list: A list of (4, 4) numpy arrays or tensors representing 
+                       Camera-to-World poses (Where the camera IS).
+        intrinsics_matrix: A (3, 3) matrix of camera intrinsics.
+    """
+    num_frames = len(user_c2w_list)
+    
+    # 1. Convert to Tensor
+    if isinstance(user_c2w_list, list):
+        poses = torch.tensor(user_c2w_list, dtype=torch.float32, device=device)
+    else:
+        poses = user_c2w_list.to(device).float()
+
+    # 2. INVERT C2W to W2C (Critical Step)
+    # The provided code operates on View Matrices (World-to-Camera)
+    w2c_poses = torch.inverse(poses)
+
+    # 3. Add Batch Dimension [N, 4, 4] -> [1, N, 4, 4]
+    generated_w2cs = w2c_poses.unsqueeze(0)
+
+    # 4. Handle Intrinsics
+    # Must match shape [1, N, 3, 3]
+    if intrinsics_matrix.dim() == 2:
+        generated_intrinsics = intrinsics_matrix.unsqueeze(0).unsqueeze(0).repeat(1, num_frames, 1, 1)
+    else:
+        # Assuming user gave [N, 3, 3], just add batch
+        generated_intrinsics = intrinsics_matrix.unsqueeze(0)
+
+    return generated_w2cs, generated_intrinsics
 
 def _align_inv_depth_to_depth(
     source_inv_depth: torch.Tensor,

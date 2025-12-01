@@ -74,6 +74,7 @@ class Gen3cPipeline(DiffusionVideo2WorldGenerationPipeline):
             num_video_frames: Number of frames to generate
             seed: Random seed for sampling
         """
+        print(f"# frames: {num_video_frames}, fps: {fps}, height: {height}, width: {width}")
         super().__init__(
             inference_type=inference_type,
             checkpoint_dir=checkpoint_dir,
@@ -104,6 +105,7 @@ class Gen3cPipeline(DiffusionVideo2WorldGenerationPipeline):
             config_file="cosmos_predict1/diffusion/config/config.py",
             model_class=DiffusionGen3CModel,
         )
+        self.model.state_shape = [16, 16, self.height // 8, self.width // 8]
 
     def generate(
         self,

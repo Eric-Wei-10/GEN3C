@@ -242,7 +242,7 @@ def demo(args):
     """
     misc.set_random_seed(args.seed)
     inference_type = "video2world"
-    validate_args(args)
+    # validate_args(args)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     if args.num_gpus > 1:
@@ -253,6 +253,8 @@ def demo(args):
         distributed.init()
         parallel_state.initialize_model_parallel(context_parallel_size=args.num_gpus)
         process_group = parallel_state.get_context_parallel_group()
+        # parallel_state.initialize_model_parallel(pipeline_model_parallel_size=args.num_gpus)
+        # process_group = parallel_state.get_pipeline_model_parallel_group()
 
     # Initialize video2world generation model pipeline
     pipeline = Gen3cPipeline(
@@ -277,6 +279,8 @@ def demo(args):
         seed=args.seed,
     )
 
+    log.info(f"Finish initializing pipeline")
+
     frame_buffer_max = pipeline.model.frame_buffer_max
     generator = torch.Generator(device=device).manual_seed(args.seed)
     sample_n_frames = pipeline.model.chunk_size
@@ -293,8 +297,11 @@ def demo(args):
         # Single prompt case
         prompts = [{"prompt": args.prompt, "visual_input": args.input_image_path}]
 
+    print(f"prompts are: f{prompts}")
+
     os.makedirs(os.path.dirname(args.video_save_folder), exist_ok=True)
     for i, input_dict in enumerate(prompts):
+        print(f"Iteration: {i}, prompt: {input_dict}")
         current_prompt = input_dict.get("prompt", None)
         if current_prompt is None and args.disable_prompt_upsampler:
             log.critical("Prompt is missing, skipping world generation.")
@@ -309,6 +316,7 @@ def demo(args):
             print(f"Input image {current_image_path} is not valid, skipping.")
             continue
 
+        print(f"Start _predict_moge_depth")
         # load image, predict depth and initialize 3D cache
         (
             moge_image_b1chw_float,
@@ -319,7 +327,9 @@ def demo(args):
         ) = _predict_moge_depth(
             current_image_path, args.height, args.width, device, moge_model
         )
+        print(f"Finish _predict_moge_depth")
 
+        print(f"Initialize Cache3D_Buffer")
         cache = Cache3D_Buffer(
             frame_buffer_max=frame_buffer_max,
             generator=generator,
@@ -332,10 +342,12 @@ def demo(args):
             filter_points_threshold=args.filter_points_threshold,
             foreground_masking=args.foreground_masking,
         )
+        print(f"Finish Cache3D_Buffer")
 
         initial_cam_w2c_for_traj = moge_initial_w2c_b144[0, 0]
         initial_cam_intrinsics_for_traj = moge_intrinsics_b133[0, 0]
-
+        
+        print(f"Generating camera trajectory")
         # Generate camera trajectory using the new utility function
         try:
             generated_w2cs, generated_intrinsics = generate_camera_trajectory(
@@ -351,6 +363,7 @@ def demo(args):
         except (ValueError, NotImplementedError) as e:
             log.critical(f"Failed to generate trajectory: {e}")
             continue
+        print(f"Finish camera trajectory")
 
         log.info(f"Generating 0 - {sample_n_frames} frames")
         rendered_warp_images, rendered_warp_masks = cache.render_cache(
@@ -363,6 +376,7 @@ def demo(args):
             all_rendered_warps.append(rendered_warp_images.clone().cpu())
 
         # Generate video
+        print(f"start generating video")
         generated_output = pipeline.generate(
             prompt=current_prompt,
             image_path=current_image_path,
@@ -465,6 +479,8 @@ def demo(args):
 
         os.makedirs(os.path.dirname(video_save_path), exist_ok=True)
 
+        log.info(f"saving video...")
+
         # Save video
         save_video(
             video=final_video_to_save,
@@ -485,9 +501,11 @@ def demo(args):
 
 
 if __name__ == "__main__":
+    print(f"start")
     args = parse_arguments()
     if args.prompt is None:
         args.prompt = ""
+    print(args)
     args.disable_guardrail = True
     args.disable_prompt_upsampler = True
     demo(args)
