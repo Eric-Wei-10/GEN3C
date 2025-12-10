@@ -215,7 +215,7 @@ def compute_variance_on_first_frame_across_videos(
     """
     N, _, H, W = frames_t.shape
 
-    # 1. Backproject first-frame depth -> worLd: use first frame's depth + (K_0, w2c_0)
+    # 1. Backproject first-frame depth -> world: use first frame's depth + (K_0, w2c_0)
     # to get the canonical 3D points in world coordinates.
     X_world = backproject_depth_to_world(depth_0, K_0, w2c_0)       # [3, H * W]
 
