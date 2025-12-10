@@ -89,8 +89,9 @@ def main():
         cs = plt.contour(
             mask_bool.astype(float),
             levels=[0.5],
+            colors="red",
             linewidths=1.0,
-            linestyles="--",
+            linestyles="-",
         )
         cs.collections[0].set_label("Intersection boundary")
         plt.legend(loc="upper right")

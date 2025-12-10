@@ -159,6 +159,10 @@ def masked_variance_across_videos(warped_all, masks_all):
 
     # valid_counts[v, u]: number of videos that have a valid sample at pixel (u, v) (sees the 3D point).
     valid_counts = masks_all.sum(dim=0)                     # [1, 1, H, W]
+
+    # print("min valid_counts:", valid_counts.min().item())
+    # print("max valid_counts:", valid_counts.max().item())
+
     # Clamp to avoid division by zero when computing mean.
     valid_counts_clamped = torch.clamp(valid_counts, min=1.0)
 
@@ -211,11 +215,11 @@ def compute_variance_on_first_frame_across_videos(
     """
     N, _, H, W = frames_t.shape
 
-    # 1. Backproject first-frame depth -> world: use first frame's depth + (K_0, w2c_0)
+    # 1. Backproject first-frame depth -> worLd: use first frame's depth + (K_0, w2c_0)
     # to get the canonical 3D points in world coordinates.
     X_world = backproject_depth_to_world(depth_0, K_0, w2c_0)       # [3, H * W]
 
-    # 2. Warp each video’s frame t into first-frame coords.
+    # 2. Warp each video's frame t into first-frame coords.
     # For each video, project same 3D points X_world into that video's frame t using (K_t, w2c_t).
     # And store the warped images and visibility masks.
     warped_list = []
@@ -235,18 +239,18 @@ def compute_variance_on_first_frame_across_videos(
     warped_all = torch.cat(warped_list, dim=0)                      # [N, C, H, W]
     masks_all = torch.cat(mask_list, dim=0)                         # [N, 1, H, W]
 
-    # 3. Intersection of visibility across videos: pixel valid only if ALL videos see it.
-    intersection_mask = (masks_all.sum(dim=0) == N).float()         # [1, 1, H, W]
-    # Restrict masks to intersection (else all zeros).
-    masks_all_inter = masks_all * intersection_mask                 # [N, 1, H, W]
-
-    # 4. Variance across videos, only on intersection.
     var_map, valid_counts = masked_variance_across_videos(
-        warped_all, masks_all_inter
+        warped_all, masks_all
     )
-    inter_mask_2d = intersection_mask[0, 0]                         # [H, W]
 
-    return var_map, valid_counts, inter_mask_2d
+    # print("valid counts:", valid_counts)
+    # print("min valid_counts:", valid_counts.min().item())
+    # print("max valid_counts:", valid_counts.max().item())
+
+    min_videos = N
+    inter_mask = (valid_counts >= min_videos).float()  # [H, W]
+
+    return var_map, valid_counts, inter_mask
 
 
 def load_frame_from_video(video_path, frame_index):
@@ -358,14 +362,6 @@ def main():
     D0 = cam_data["depth0"].astype(np.float32)          # (H, W)
     w2c_all = cam_data["w2c"].astype(np.float32)        # (T, 4, 4)
     K_all = cam_data["K"].astype(np.float32)            # (T, 3, 3)
-
-    # If the matrices stored in camera_npz are actually camera-to-world (c2w) 
-    # but saved as "w2c", we need to invert them to get true world-to-camera matrices.
-    ASSUME_W2C_IS_C2W = True
-
-    if ASSUME_W2C_IS_C2W:
-        # w2c is currently c2w, so invert it to get world-to-camera (w2c) of shape (T, 4, 4).
-        w2c_all = np.linalg.inv(w2c_all)
 
     # Check 1 (Dimensions): check that we have K and w2c for all frames.
     T_cam = w2c_all.shape[0]
