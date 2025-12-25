@@ -38,7 +38,7 @@ class Config(config.Config):
     )
 
 
-def make_config():
+def make_config(chunk_duration=121):
     c = Config(
         model=DefaultModelConfig(),
     )
@@ -48,7 +48,7 @@ def make_config():
     c.job.group = "inference"
 
     # Call this function to register config groups for advanced overriding.
-    register_configs()
+    register_configs(chunk_duration=chunk_duration)
 
     # experiment config are defined in the experiment folder
     # call import_all_modules_from_package to register them

@@ -158,6 +158,7 @@ class DiffusionText2WorldGenerationPipeline(BaseWorldGenerationPipeline):
             offload_guardrail_models=offload_guardrail_models,
             disable_guardrail=disable_guardrail,
             disable_prompt_encoder=disable_prompt_encoder,
+            num_video_frames=num_video_frames,
         )
         self.prompt_upsampler_dir = prompt_upsampler_dir
         self.enable_prompt_upsampler = enable_prompt_upsampler

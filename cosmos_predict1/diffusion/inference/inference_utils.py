@@ -308,9 +308,10 @@ def load_model_by_config(
     config_job_name,
     config_file="projects/cosmos_video/config/config.py",
     model_class=DiffusionT2WModel,
+    chunk_duration=121,
 ):
     config_module = get_config_module(config_file)
-    config = importlib.import_module(config_module).make_config()
+    config = importlib.import_module(config_module).make_config(chunk_duration=chunk_duration)
 
     config = override(config, ["--", f"experiment={config_job_name}"])
 

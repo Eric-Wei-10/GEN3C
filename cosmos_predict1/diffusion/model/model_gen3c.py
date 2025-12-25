@@ -27,7 +27,7 @@ class DiffusionGen3CModel(DiffusionV2WModel):
     def __init__(self, config):
         super().__init__(config)
         self.frame_buffer_max = config.frame_buffer_max
-        self.chunk_size = 121
+        self.chunk_size = config.tokenizer.video_vae.pixel_chunk_duration
 
     def encode_warped_frames(
         self, 
