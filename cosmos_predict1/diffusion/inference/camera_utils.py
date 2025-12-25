@@ -16,7 +16,7 @@
 import torch
 import math
 import torch.nn.functional as F
-from .forward_warp_utils_pytorch import unproject_points
+from forward_warp_utils_pytorch import unproject_points
 
 def apply_transformation(Bx4x4, another_matrix):
     B = Bx4x4.shape[0]
@@ -41,7 +41,9 @@ def look_at_matrix(camera_pos, target, invert_pos=True):
     look_at[0, :3] = right
     look_at[1, :3] = up
     look_at[2, :3] = forward
-    look_at[:3, 3] = (-camera_pos) if invert_pos else camera_pos
+    # look_at[:3, 3] = (-camera_pos) if invert_pos else camera_pos # The original code of GEN3C has a bug here.
+    rotation_matrix = torch.stack([right, up, forward], dim=0)
+    look_at[:3, 3] = -torch.matmul(rotation_matrix, camera_pos)
 
     return look_at
 
@@ -139,6 +141,65 @@ def create_spiral_trajectory(
     trajectory = torch.stack(trajectory)
     return apply_transformation(trajectory, world_to_camera_matrix)
 
+def create_move_rotate_trajectory(
+    world_to_camera_matrix,
+    center_depth,
+    n_steps=13,
+    distance=0.1,
+    theta_deg=360,
+    phi_deg=360,
+    device="cuda",
+):
+    trajectory = []
+
+    initial_camera_pos = torch.tensor([0.0, 0.0, 0.0], device=device)
+
+    theta_rad = math.radians(theta_deg)
+    phi_rad = math.radians(phi_deg)
+
+    total_dist_world = distance * center_depth
+
+    # total distance along different axis
+    move_vec_x = math.sin(theta_rad) * math.cos(phi_rad) * total_dist_world
+    move_vec_y = math.sin(phi_rad) * total_dist_world
+    move_vec_z = math.cos(theta_rad) * math.cos(phi_rad) * total_dist_world
+
+    for i in range(n_steps):
+        t = i / (n_steps - 1)
+        
+        # move uniformly along the linear path
+        current_x = t * move_vec_x
+        current_y = t * move_vec_y
+        current_z = t * move_vec_z
+
+        # calculate current camera position in frame 0's coordinate
+        pos = initial_camera_pos + torch.tensor([current_x, current_y, current_z], device=device)
+        
+        # rotating uniformly
+        current_theta = t * theta_rad
+        current_phi = t * phi_rad
+        
+        # assume initial focus direction is along the positive Z-axis (0, 0, 1).
+        # calculate look-at vector direction after rotating by theta and phi in frame 0's coordinate
+        look_at_x = math.sin(current_theta) * math.cos(current_phi)
+        look_at_y = math.sin(current_phi)
+        look_at_z = math.cos(current_theta) * math.cos(current_phi)
+        
+        # construct the look-at direction vector relative to the camera, scaled by center_depth (usually 1).
+        look_dir_vector = torch.tensor([look_at_x, look_at_y, look_at_z], device=device) * center_depth
+        
+        # look-at coordinate = current camera Position in frame 0's coordinate + look-at direction Vector.
+        # This implies: Wherever the camera moves, the target point "hovers" 
+        # at a distance of `center_depth` in front of the camera, rotating with the angle.
+        target_look_at = pos + look_dir_vector
+
+        view_matrix = look_at_matrix(pos, target_look_at)
+        trajectory.append(view_matrix)
+
+    trajectory = torch.stack(trajectory)
+    
+    # apply to the world-to-camera pose of frame 0.
+    return apply_transformation(trajectory, world_to_camera_matrix)
 
 def generate_camera_trajectory(
     trajectory_type: str,
@@ -222,36 +283,55 @@ def generate_camera_trajectory(
 
     return generated_w2cs, generated_intrinsics
 
-# gemini: accept user-provided custom poses
-def format_custom_poses(user_c2w_list, intrinsics_matrix, device="cuda"):
+def generate_camera_trajectory_frontier(
+    initial_w2c: torch.Tensor,  # Shape: (4, 4)
+    initial_intrinsics: torch.Tensor,  # Shape: (3, 3)
+    num_frames: int,
+    movement_distance: float,
+    center_depth: float = 1.0,
+    device: str = "cuda",
+    theta_deg: int = 360,
+    phi_deg: int = 360,
+):
     """
-    Args:
-        user_c2w_list: A list of (4, 4) numpy arrays or tensors representing 
-                       Camera-to-World poses (Where the camera IS).
-        intrinsics_matrix: A (3, 3) matrix of camera intrinsics.
-    """
-    num_frames = len(user_c2w_list)
+    Generates a sequence of camera poses (world-to-camera matrices) and intrinsics
+    for detecting frontiers. In out trajectory system:
     
-    # 1. Convert to Tensor
-    if isinstance(user_c2w_list, list):
-        poses = torch.tensor(user_c2w_list, dtype=torch.float32, device=device)
+    Coordinate System: Origin at center of view. +X is Right, +Y is Down, +Z is Forward.
+    Motion: The camera rotates uniformly during translation. Upon termination, the camera
+    faces the same direction as the trajectory vector.
+
+    Args:
+        initial_w2c: Initial world-to-camera matrix (4x4 tensor or num_framesx4x4 tensor).
+        initial_intrinsics: Camera intrinsics matrix (3x3 tensor or num_framesx3x3 tensor).
+        num_frames: Number of frames (steps) in the trajectory.
+        movement_distance: Distance factor for the camera movement.
+        center_depth: Depth of the center point the camera might focus on.
+        device: Computation device ("cuda" or "cpu").
+        theta_deg: Angle between the trajectory's projection on the XZ plane and the +Z axis (positive towards +X).
+        phi_deg: Angle between the trajectory and the XZ plane (positive towards +Y).
+
+    Returns:
+        A tuple (generated_w2cs, generated_intrinsics):
+        - generated_w2cs: Batch of world-to-camera matrices for the trajectory (1, num_frames, 4, 4 tensor).
+        - generated_intrinsics: Batch of camera intrinsics for the trajectory (1, num_frames, 3, 3 tensor).
+    """
+    
+
+    new_w2cs_seq = create_move_rotate_trajectory(
+        world_to_camera_matrix=initial_w2c,
+        center_depth=center_depth,
+        n_steps=num_frames,
+        distance=movement_distance,
+        theta_deg=theta_deg,
+        phi_deg=phi_deg,
+        device=device,
+    )
+    generated_w2cs = new_w2cs_seq.unsqueeze(0)  # Shape: [1, num_frames, 4, 4]
+    if initial_intrinsics.dim() == 2:
+        generated_intrinsics = initial_intrinsics.unsqueeze(0).unsqueeze(0).repeat(1, num_frames, 1, 1)
     else:
-        poses = user_c2w_list.to(device).float()
-
-    # 2. INVERT C2W to W2C (Critical Step)
-    # The provided code operates on View Matrices (World-to-Camera)
-    w2c_poses = torch.inverse(poses)
-
-    # 3. Add Batch Dimension [N, 4, 4] -> [1, N, 4, 4]
-    generated_w2cs = w2c_poses.unsqueeze(0)
-
-    # 4. Handle Intrinsics
-    # Must match shape [1, N, 3, 3]
-    if intrinsics_matrix.dim() == 2:
-        generated_intrinsics = intrinsics_matrix.unsqueeze(0).unsqueeze(0).repeat(1, num_frames, 1, 1)
-    else:
-        # Assuming user gave [N, 3, 3], just add batch
-        generated_intrinsics = intrinsics_matrix.unsqueeze(0)
+        generated_intrinsics = initial_intrinsics.unsqueeze(0)
 
     return generated_w2cs, generated_intrinsics
 

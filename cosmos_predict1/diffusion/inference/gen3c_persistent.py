@@ -91,7 +91,7 @@ class Gen3cPersistentModel():
             parallel_state.initialize_model_parallel(context_parallel_size=args.num_gpus)
             process_group = parallel_state.get_context_parallel_group()
 
-        self.frames_per_batch = 121
+        self.frames_per_batch = args.num_video_frames
         self.inference_overlap_frames = 1
 
         # Initialize video2world generation model pipeline
@@ -264,7 +264,9 @@ class Gen3cPersistentModel():
             estimated_w2c_b44_np,
             estimated_focal_lengths_b2_np,
             estimated_principal_point_rel_b2_np,
-            working_resolutions_b2_np
+            working_resolutions_b2_np,
+            # also add moge depth
+            self.cache.input_depth.cpu().numpy()
         )
 
 
@@ -436,6 +438,10 @@ class Gen3cPersistentModel():
                 all_predicted_depth.append(depths_batch_i)
                 del depths_batch_i
 
+        # Charlotte
+        # ========================
+        video_all_frames_np = video.copy()
+        # ===========================
 
         if is_rank0():
             # Final video processing
@@ -495,6 +501,29 @@ class Gen3cPersistentModel():
         else:
             predicted_depth = None
 
+        # Charlotte
+        # ======================
+        # Full per-frame MoGe re-estimated depth and mask for the entire video.
+        predicted_depth_all = None
+        predicted_mask_all = None
+
+        if return_estimated_depths:
+            depth_list = []
+            mask_list = []
+            T_total = video_all_frames_np.shape[0]
+
+            for t in range(T_total):
+                frame_t = video_all_frames_np[t]  # (H, W, 3), uint8 or float
+                pred_depth_t, pred_mask_t, _ = self.moge_depth_for_frame(frame_t)
+                # pred_depth_t, pred_mask_t: (1, 1, H, W)
+                depth_list.append(pred_depth_t.cpu().numpy())
+                mask_list.append(pred_mask_t.cpu().numpy())
+
+            if depth_list:
+                predicted_depth_all = np.concatenate(depth_list, axis=0)  # (T, 1, H, W)
+            if mask_list:
+                predicted_mask_all = np.concatenate(mask_list, axis=0)    # (T, 1, H, W)
+        # ======================
 
         # Currently `video` is [n_frames, height, width, channels].
         # Return as [1, n_frames, channels, height, width] for consistency with other codebases.
@@ -510,6 +539,11 @@ class Gen3cPersistentModel():
             "rendered_warp_images_no_overlap": rendered_warp_images_no_overlap,
             "video_no_overlap": video_no_overlap,
             "predicted_depth": predicted_depth,
+            # Charlotte
+            # =======================
+            "predicted_depth_all": predicted_depth_all,  # (T, 1, H, W) or None
+            "predicted_mask_all": predicted_mask_all,    # (T, 1, H, W) or None
+            # ========================
             "video_save_path": video_save_path,
         }
 
@@ -538,6 +572,42 @@ class Gen3cPersistentModel():
         if self.cache is None:
             return None
         return self.cache.input_depth
+
+    # Charlotte
+    # ====================================================
+    @torch.no_grad()
+    def moge_depth_for_frame(
+        self,
+        frame_hwc_0_255: np.ndarray | torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """
+        Run MoGe on a single RGB frame in HWC, 0..255 space.
+
+        Args:
+            frame_hwc_0_255: (H, W, 3), either numpy or torch, RGB, in [0,255].
+
+        Returns:
+            pred_depth:  (1, 1, H, W)  float32
+            pred_mask:   (1, 1, H, W)  bool/float mask from MoGe
+            pred_image_for_depth_chw_0_1: (C, H, W) in [0,1]
+        """
+        if isinstance(frame_hwc_0_255, torch.Tensor):
+            last_frame_hwc_0_255 = frame_hwc_0_255.to(self.device_with_rank)
+        else:
+            # numpy input
+            last_frame_hwc_0_255 = torch.tensor(
+                frame_hwc_0_255,
+                device=self.device_with_rank
+            )
+
+        pred_image_for_depth_chw_0_1 = last_frame_hwc_0_255.permute(2, 0, 1) / 255.0  # (C,H,W), [0,1]
+
+        pred_depth, pred_mask = _predict_moge_depth_from_tensor(
+            pred_image_for_depth_chw_0_1, self.moge_model
+        )
+        return pred_depth, pred_mask, pred_image_for_depth_chw_0_1
+
+    # =============================================================
 
     @property
     def W(self) -> int:

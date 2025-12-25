@@ -99,13 +99,14 @@ class Gen3cPipeline(DiffusionVideo2WorldGenerationPipeline):
             num_input_frames=1,
         )
 
-    def _load_model(self):
+    def _load_model(self, chunk_duration=121):
         self.model = load_model_by_config(
             config_job_name=self.model_name,
             config_file="cosmos_predict1/diffusion/config/config.py",
             model_class=DiffusionGen3CModel,
+            chunk_duration=chunk_duration
         )
-        self.model.state_shape = [16, 16, self.height // 8, self.width // 8]
+        self.model.state_shape = [16, (self.num_video_frames - 1) // 8 + 1, self.height // 8, self.width // 8]
 
     def generate(
         self,
@@ -210,6 +211,7 @@ class Gen3cPipeline(DiffusionVideo2WorldGenerationPipeline):
             self._load_tokenizer()
 
         condition_latent = self._run_tokenizer_encoding(image_or_video_path)
+        print(f"After encoding, condition_latent shape: {condition_latent.shape}") # condition_latent[2] should be (num_frames - 1) // 8 + 1
 
         if self.offload_network:
             self._load_network()

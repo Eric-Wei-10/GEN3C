@@ -38,6 +38,7 @@ class BaseWorldGenerationPipeline(ABC):
         offload_guardrail_models: bool = False,
         disable_guardrail: bool = False,
         disable_prompt_encoder: bool = False,
+        num_video_frames: int = 121,
     ):
         """Initialize base world generation pipeline.
 
@@ -73,13 +74,16 @@ class BaseWorldGenerationPipeline(ABC):
         self.disable_guardrail = disable_guardrail
         self.disable_prompt_encoder = disable_prompt_encoder
 
+        # Additional variable
+        self.num_video_frames = num_video_frames
+
         # Initialize model instances
         self.text_guardrail = None
         self.video_guardrail = None
         self.text_encoder = None
         self.model = None
 
-        self._load_model()
+        self._load_model(chunk_duration=self.num_video_frames)
 
         if not self.offload_text_encoder_model or self.disable_prompt_encoder:
             self._load_text_encoder_model()

@@ -80,18 +80,18 @@ def register_conditioner(cs):
     )
 
 
-def register_tokenizer(cs):
+def register_tokenizer(cs, chunk_duration=121):
     cs.store(
         group="tokenizer",
         package="model.tokenizer",
         name="cosmos_diffusion_tokenizer_res720_comp8x8x8_t121_ver092624",
-        node=get_cosmos_diffusion_tokenizer_comp8x8x8(resolution="720", chunk_duration=121),
+        node=get_cosmos_diffusion_tokenizer_comp8x8x8(resolution="720", chunk_duration=chunk_duration),
     )
 
 
-def register_configs():
+def register_configs(chunk_duration=121):
     cs = ConfigStore.instance()
 
     register_net(cs)
     register_conditioner(cs)
-    register_tokenizer(cs)
+    register_tokenizer(cs, chunk_duration=chunk_duration)
