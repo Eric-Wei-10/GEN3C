@@ -230,3 +230,39 @@ run.sh
 visualize_variance.py
 ```
 
+---
+
+## Retrieve validity mask and occlusion mask
+
+```bash
+bash run.sh multi [frame_index] forward outputs ./inputs [traj_mask] [combine_policy] [sigma_deg]
+```
+
+```bash
+bash run.sh multi [frame_index] backward outputs ./inputs [traj_mask] [combine_policy] [sigma_deg]
+```
+
+1. `frame_index`: e.g. `96`
+2. `traj_mask`: `fill | intersection`
+3. `combine_policy`: `priority | soft`
+4. `sigma_deg` (soft only): e.g. `15`
+
+### Validity mask
+
+```python
+import numpy as np
+
+data = np.load("outputs/combined_priority_backward_t{frame_index}_YYYYMMDD_HHMMSS.npz")
+combined_mask = data["combined_mask"].astype(np.float32)
+validity_mask = combined_mask > 0.5
+```
+
+### Occlusion mask
+
+```python
+import numpy as np
+
+data = np.load("outputs/combined_priority_forward_t{frame_index}_YYYYMMDD_HHMMSS.npz")
+combined_mask = data["combined_mask"].astype(np.float32)
+occlusion_mask = combined_mask > 0.5
+```
