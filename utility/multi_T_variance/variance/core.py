@@ -393,9 +393,52 @@ def project_t_to_0_and_splat_bilinear(frame_t, depth_t, mask_t, K_t, w2c_t, K0, 
 # Variance Helpers
 # ============================================================
 
-def masked_variance_across_videos(warped_all, masks_all):
+# def masked_variance_across_videos(warped_all, masks_all):
+#     """
+#     Compute per-pixel variance across videos, considering only valid pixels indicated by masks.
+
+#     warped_all: [N, C, H, W]    (warped frames from N videos)
+#     masks_all:  [N, 1, H, W]    (1.0 where valid pixels from that video; 0.0 = invalid)
+
+#     Returns:
+#       var_map: [C, H, W]        (unbiased, 0 where valid_counts<2)
+#       valid_counts: [H, W]      (number of valid pixels per location)
+#     """
+#     _, C, _, _ = warped_all.shape
+
+#     # Broadcast masks to channels: expand masks 
+#     # from [N, 1, H, W] to [N, C, H, W] to match the color channels.
+#     mask_bc = masks_all.expand(-1, C, -1, -1)               # [N, C, H, W]
+
+#     # valid_counts[v, u]: number of videos that have a valid sample at pixel (u, v) (sees the 3D point).
+#     valid_counts = masks_all.sum(dim=0)                     # [1, 1, H, W]
+#     # Clamp to avoid division by zero when computing mean.
+#     valid_counts_clamped = torch.clamp(valid_counts, min=1.0)
+
+#     # Sum along the video dimension only where mask is valid.
+#     sum_vals = (warped_all * mask_bc).sum(dim=0)            # [C, H, W]
+#     # Compute the mean color per pixel per channel across valid videos.
+#     mean = sum_vals / valid_counts_clamped.squeeze(0)       # [C, H, W]
+
+#     # Variance: E[(X - mu)^2]
+#     # Compute squared differences from the mean, only on valid samples.
+#     diff = (warped_all - mean.unsqueeze(0)) * mask_bc
+#     sq_sum = (diff ** 2).sum(dim=0)                         # [C, H, W]
+
+#     # Compute unbiased variance: divide by (valid_counts - 1).
+#     # Clamp denominator to at least 1 to avoid division-by-zero.
+#     denom = torch.clamp(valid_counts - 1.0, min=1.0)        # [1, 1, H, W]
+#     var = sq_sum / denom.squeeze(0)                         # [C, H, W]
+
+#     # If fewer than 2 videos are valid at a pixel, variance is undefined; set variance = 0.
+#     at_least_two = (valid_counts >= 2.0).squeeze(0)         # [1, H, W]
+#     var_map = torch.where(at_least_two.expand_as(var), var, torch.zeros_like(var))
+
+#     return var_map, valid_counts.squeeze(0).squeeze(0)          # [H, W]
+
+def masked_variance_across_videos(warped_all, masks_all, chunk_size=None):
     """
-    Compute per-pixel variance across videos, considering only valid pixels indicated by masks.
+    Compute memory-safe per-pixel variance across videos, considering only valid pixels indicated by masks.
 
     warped_all: [N, C, H, W]    (warped frames from N videos)
     masks_all:  [N, 1, H, W]    (1.0 where valid pixels from that video; 0.0 = invalid)
@@ -404,34 +447,40 @@ def masked_variance_across_videos(warped_all, masks_all):
       var_map: [C, H, W]        (unbiased, 0 where valid_counts<2)
       valid_counts: [H, W]      (number of valid pixels per location)
     """
-    _, C, _, _ = warped_all.shape
+    N, C, H, W = warped_all.shape
 
-    # Broadcast masks to channels: expand masks 
-    # from [N, 1, H, W] to [N, C, H, W] to match the color channels.
-    mask_bc = masks_all.expand(-1, C, -1, -1)               # [N, C, H, W]
+    # Heuristic: DINO (C large) -> small chunks.
+    if chunk_size is None:
+        chunk_size = 1 if C >= 64 else 8
 
-    # valid_counts[v, u]: number of videos that have a valid sample at pixel (u, v) (sees the 3D point).
-    valid_counts = masks_all.sum(dim=0)                     # [1, 1, H, W]
-    # Clamp to avoid division by zero when computing mean.
-    valid_counts_clamped = torch.clamp(valid_counts, min=1.0)
+    device = warped_all.device
+    sum_vals = torch.zeros((C, H, W), device=device, dtype=torch.float32)
+    sum_sq = torch.zeros((C, H, W), device=device, dtype=torch.float32)
+    valid_counts = torch.zeros((H, W), device=device, dtype=torch.float32)
 
-    # Sum along the video dimension only where mask is valid.
-    sum_vals = (warped_all * mask_bc).sum(dim=0)            # [C, H, W]
-    # Compute the mean color per pixel per channel across valid videos.
-    mean = sum_vals / valid_counts_clamped.squeeze(0)       # [C, H, W]
+    # Accumulate in chunks to avoid allocating huge temporaries.
+    for s in range(0, N, chunk_size):
+        e = min(s + chunk_size, N)
+        x = warped_all[s:e].to(torch.float32)           # [b, C, H, W]
+        m = masks_all[s:e].to(torch.float32)            # [b, 1, H, W]
 
-    # Variance: E[(X - mu)^2]
-    # Compute squared differences from the mean, only on valid samples.
-    diff = (warped_all - mean.unsqueeze(0)) * mask_bc
-    sq_sum = (diff ** 2).sum(dim=0)                         # [C, H, W]
+        # Broadcast mask across channels without explicitly expanding.
+        sum_vals += (x * m).sum(dim=0)                  # [C, H, W]
+        sum_sq += ((x * x) * m).sum(dim=0)              # [C, H, W]
+        valid_counts += m.sum(dim=0).squeeze(0)               # [H, W]
 
-    # Compute unbiased variance: divide by (valid_counts - 1).
-    # Clamp denominator to at least 1 to avoid division-by-zero.
-    denom = torch.clamp(valid_counts - 1.0, min=1.0)        # [1, 1, H, W]
-    var = sq_sum / denom.squeeze(0)                         # [C, H, W]
+    # Unbiased variance per pixel, per channel:
+    # var = (sum_sq - sum^2 / n) / (n - 1)
+    n = torch.clamp(valid_counts, min=1.0)                    # [H, W]
+    numer = sum_sq - (sum_vals * sum_vals) / n.unsqueeze(0)
+    denom = torch.clamp(valid_counts - 1.0, min=1.0)          # [H, W]
+    var = numer / denom.unsqueeze(0)
 
-    # If fewer than 2 videos are valid at a pixel, variance is undefined; set variance = 0.
-    at_least_two = (valid_counts >= 2.0).squeeze(0)         # [1, H, W]
-    var_map = torch.where(at_least_two.expand_as(var), var, torch.zeros_like(var))
+    # Where counts < 2 => variance undefined => 0.
+    var_map = torch.where(
+        (valid_counts >= 2.0).unsqueeze(0).expand_as(var),
+        var,
+        torch.zeros_like(var),
+    )
 
-    return var_map, valid_counts.squeeze(0).squeeze(0)          # [H, W]
+    return var_map, valid_counts

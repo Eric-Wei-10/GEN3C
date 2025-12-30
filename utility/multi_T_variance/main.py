@@ -26,6 +26,10 @@ def main():
                    help="Which per-trajectory mask defines validity when combining across trajectories.")
     p.add_argument("--save_per_trajectory", action="store_true")
 
+    # Channel type option (rgb or dino) for single mode.
+    p.add_argument("--channel_type", type=str, default="rgb", choices=["rgb", "dino"],
+                   help="Channel type to use for variance computation in single mode.")
+
     args = p.parse_args()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -41,6 +45,7 @@ def main():
             sigma_deg=args.sigma_deg,
             traj_mask=args.traj_mask,
             save_per_trajectory=args.save_per_trajectory,
+            channel_type=args.channel_type,
         )
         return
 
@@ -53,11 +58,13 @@ def main():
         frame_index=args.frame_index,
         mode=args.mode,
         device=device,
+        channel_type=args.channel_type,
     )
 
     np.savez(
         args.output_npz,
         mode=np.array(args.mode),
+        channel_type=np.array(args.channel_type),
         var_map=r["var_map"].detach().cpu().numpy(),
         var_scalar=r["var_scalar"].detach().cpu().numpy(),
         valid_counts=r["valid_counts"].detach().cpu().numpy(),

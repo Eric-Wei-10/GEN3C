@@ -78,7 +78,7 @@ Where:
 Usage (positional arguments):
 
 ```
-bash run.sh [run_mode] [frame_index] [mode] [output_dir] [traj_dir_or_inputs_root] [traj_mask] [combine_policy] [sigma_deg]
+bash run.sh [run_mode] [frame_index] [mode] [output_dir] [traj_dir_or_inputs_root] [traj_mask] [channel_type] [combine_policy] [sigma_deg]
 ```
 
 Arguments:
@@ -88,8 +88,9 @@ Arguments:
 4. `output_dir`: e.g. `outputs`
 5. `traj_dir` (single) **or** `inputs_root` (multi)
 6. `traj_mask`: `fill | intersection`
-7. `combine_policy` (multi): `priority | soft`
-8. `sigma_deg` (multi, soft only): e.g. `15`
+7. `channel_type`: `rgb | dino`
+8. `combine_policy` (multi): `priority | soft`
+9. `sigma_deg` (multi, soft only): e.g. `15`
 
 Outputs:
 - `${out_prefix}.npz`
@@ -105,7 +106,7 @@ Outputs:
 Compute variance across seeds for one trajectory folder:
 
 ```bash
-bash run.sh single 96 backward outputs ./inputs/result_-15_0 fill
+bash run.sh single 96 backward outputs ./inputs/result_-15_0 fill dino
 ```
 
 This produces something like:
@@ -119,7 +120,7 @@ This produces something like:
 Combine all `result_*` folders under `inputs/`:
 
 ```bash
-bash run.sh multi 96 backward outputs ./inputs fill priority 15
+bash run.sh multi 96 backward outputs ./inputs fill dino priority 15
 ```
 
 This produces:
@@ -221,6 +222,7 @@ variance/
   __init__.py
   combine.py
   core.py
+  dino_io.py
   io_load.py
   multi_T.py
   orientation.py
@@ -228,6 +230,8 @@ variance/
 main.py
 run.sh
 visualize_variance.py
+dino_feature.py
+dino_model.py
 ```
 
 ---
@@ -235,11 +239,11 @@ visualize_variance.py
 ## Retrieve validity mask and occlusion mask
 
 ```bash
-bash run.sh multi [frame_index] forward outputs ./inputs [traj_mask] [combine_policy] [sigma_deg]
+bash run.sh multi [frame_index] forward outputs ./inputs [traj_mask] dino [combine_policy] [sigma_deg]
 ```
 
 ```bash
-bash run.sh multi [frame_index] backward outputs ./inputs [traj_mask] [combine_policy] [sigma_deg]
+bash run.sh multi [frame_index] backward outputs ./inputs [traj_mask] dino [combine_policy] [sigma_deg]
 ```
 
 1. `frame_index`: e.g. `96`

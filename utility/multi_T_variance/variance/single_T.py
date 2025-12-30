@@ -14,6 +14,7 @@ from .core import (
     masked_variance_across_videos,
 )
 from .io_load import find_camera_npz, get_ordered_videos_by_seed, load_frames_at_t_from_list
+from .dino_io import load_dino_features_at_t_from_list
 
 
 def _npz_signature_ok(path: str) -> bool:
@@ -88,6 +89,7 @@ def compute_variance_for_one_trajectory_dir(
     frame_index: int,
     mode: str,
     device: torch.device,
+    channel_type: str = "rgb",   # "rgb" or "dino"
 ):
     """
     Compute variance for a single trajectory directory.
@@ -100,16 +102,21 @@ def compute_variance_for_one_trajectory_dir(
     camera_npz = find_camera_npz(traj_dir)
     video_paths = get_ordered_videos_by_seed(traj_dir)
 
-    # Load the same frame index from all videos.
-    frames_t_np, ordered_paths = load_frames_at_t_from_list(video_paths, frame_index)
+    # # Load the same frame index from all videos based on channel type.
+    if channel_type == "rgb":
+        frames_t_np, ordered_paths = load_frames_at_t_from_list(video_paths, frame_index)           # [N, 3, H, W]
+    elif channel_type == "dino":
+        frames_t_np, ordered_paths = load_dino_features_at_t_from_list(video_paths, frame_index)    # [N, C, H, W]
+    else:
+        raise ValueError(f"Unknown channel_type: {channel_type} (use 'rgb' or 'dino').")
     N, _, H, W = frames_t_np.shape
     if N < 2:
         raise ValueError(f"Need at least 2 videos in {traj_dir} to compute variance.")
-    frames_t = torch.from_numpy(frames_t_np).to(device)         # [N, 3, H, W]
+    frames_t = torch.from_numpy(frames_t_np).to(device)         # [N, C, H, W]
 
     # Mode: frame_t.
     if mode == "frame_t":
-        var_map = torch.var(frames_t, dim=0, unbiased=True)     # [3, H, W]
+        var_map = torch.var(frames_t, dim=0, unbiased=True)     # [C, H, W]
         var_scalar = var_map.mean(dim=0)                        # [H, W]
         valid_counts = torch.full((H, W), float(N), device=device, dtype=torch.float32)
 
@@ -193,8 +200,8 @@ def compute_variance_for_one_trajectory_dir(
             )
             warped_list.append(w_i)
             mask_list.append(m_i)
-        warped_bwd = torch.cat(warped_list, dim=0)  # [N,3,H,W]
-        masks_bwd = torch.cat(mask_list, dim=0)     # [N,1,H,W]
+        warped_bwd = torch.cat(warped_list, dim=0)      # [N, C, H, W]
+        masks_bwd = torch.cat(mask_list, dim=0)         # [N, 1, H, W]
 
     # Choose warped and masks based on mode.
     if mode == "forward":

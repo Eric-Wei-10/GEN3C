@@ -22,8 +22,9 @@ fi
 # 4 output_dir
 # 5 traj_dir (single) OR inputs_root (multi)
 # 6 traj_mask: fill|intersection
-# 7 combine_policy (multi): priority|soft   (optional; default priority)
-# 8 sigma_deg (multi): e.g. 15              (optional; default 15)
+# 7 channel_type: rgb|dino                  (optional; default rgb)
+# 8 combine_policy (multi): priority|soft   (optional; default priority)
+# 9 sigma_deg (multi): e.g. 15              (optional; default 15)
 
 RUN_MODE="${1:-multi}"
 FRAME_INDEX="${2:-96}"
@@ -31,23 +32,30 @@ MODE="${3:-backward}"
 OUTPUT_DIR="${4:-$ROOT_DIR/outputs}"
 ARG5="${5:-$ROOT_DIR/inputs}"
 TRAJ_MASK="${6:-}"
-
-COMBINE_POLICY="${7:-priority}"
-SIGMA_DEG="${8:-15}"
+CHANNEL_TYPE="${7:-rgb}"
+COMBINE_POLICY="${8:-priority}"
+SIGMA_DEG="${9:-15}"
 
 if [ -z "${TRAJ_MASK}" ]; then
   echo "ERROR: traj_mask is required."
   echo ""
-  echo "Single example:"
-  echo "  bash run.sh single 96 backward outputs ./inputs/result_-15_0 fill"
+  echo "Single examples:"
+  echo "  bash run.sh single 96 backward outputs ./inputs/result_-15_0 fill rgb"
+  echo "  bash run.sh single 96 backward outputs ./inputs/result_-15_0 fill dino"
   echo ""
-  echo "Multi example:"
-  echo "  bash run.sh multi 96 backward outputs ./inputs fill priority 15"
+  echo "Multi examples:"
+  echo "  bash run.sh multi 96 backward outputs ./inputs fill rgb priority 15"
+  echo "  bash run.sh multi 96 backward outputs ./inputs fill dino priority 15"
   exit 1
 fi
 
 if [ "${TRAJ_MASK}" != "fill" ] && [ "${TRAJ_MASK}" != "intersection" ]; then
   echo "ERROR: traj_mask must be 'fill' or 'intersection', got: ${TRAJ_MASK}"
+  exit 1
+fi
+
+if [ "${CHANNEL_TYPE}" != "rgb" ] && [ "${CHANNEL_TYPE}" != "dino" ]; then
+  echo "ERROR: channel_type must be 'rgb' or 'dino', got: ${CHANNEL_TYPE}"
   exit 1
 fi
 
@@ -75,6 +83,7 @@ echo "  RUN_MODE       = ${RUN_MODE}"
 echo "  frame_index    = ${FRAME_INDEX}"
 echo "  mode           = ${MODE}"
 echo "  traj_mask      = ${TRAJ_MASK}"
+echo "  channel_type   = ${CHANNEL_TYPE}"
 echo "  output_npz     = ${OUTPUT_NPZ}"
 echo "  out_prefix     = ${OUT_PREFIX}"
 
@@ -84,6 +93,7 @@ if [ "$RUN_MODE" = "single" ]; then
     --traj_dir "$TRAJ_DIR" \
     --frame_index "$FRAME_INDEX" \
     --mode "$MODE" \
+    --channel_type "$CHANNEL_TYPE" \
     --output_npz "$OUTPUT_NPZ"
 else
   echo "[INFO] Running multi-trajectory variance"
@@ -96,6 +106,7 @@ else
     --traj_mask "$TRAJ_MASK" \
     --combine_policy "$COMBINE_POLICY" \
     --sigma_deg "$SIGMA_DEG" \
+    --channel_type "$CHANNEL_TYPE" \
     --save_per_trajectory \
     --output_npz "$OUTPUT_NPZ"
 fi

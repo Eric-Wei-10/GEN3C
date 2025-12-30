@@ -37,6 +37,7 @@ def run_multi_from_inputs_root(
     sigma_deg: float = 15.0,
     traj_mask: str = "fill",
     save_per_trajectory: bool = False,
+    channel_type: str = "rgb",   # "rgb" or "dino"
 ):
     """
     Run multi-trajectory variance computation from a root directory containing trajectory folders.
@@ -72,9 +73,23 @@ def run_multi_from_inputs_root(
             frame_index=frame_index,
             mode=mode,
             device=device,
+            channel_type=channel_type,
         )
 
-        per_traj_results.append(result)
+        # IMPORTANT: move big tensors off GPU right away to avoid OOM.
+        result_cpu = {}
+        for k, v in result.items():
+            if torch.is_tensor(v):
+                result_cpu[k] = v.detach().cpu()
+            else:
+                result_cpu[k] = v
+        # drop GPU tensors from this trajectory
+        del result
+        if device.type == "cuda":
+            torch.cuda.empty_cache()
+
+        per_traj_results.append(result_cpu)
+        
         per_traj_orien_d.append(dist)
         traj_names.append(os.path.basename(td))
         traj_theta_phi.append((theta, phi))
@@ -113,6 +128,7 @@ def run_multi_from_inputs_root(
                 phi=np.float32(phi),
                 orientation_distance_rad=np.float32(dist),
                 mode=np.array(mode),
+                channel_type=np.array(channel_type),
 
                 var_map=result["var_map"].detach().cpu().numpy(),
                 var_scalar=result["var_scalar"].detach().cpu().numpy(),
@@ -127,6 +143,7 @@ def run_multi_from_inputs_root(
     # Save combined result (.npz).
     payload = dict(
         mode=np.array(mode),
+        channel_type=np.array(channel_type),
         frame_index=np.int64(frame_index),
 
         combine_policy=np.array(combine_policy),
