@@ -12,8 +12,8 @@ from dino_model import load_dino, DEFAULT_MODEL_NAME
 
 # --------
 UPSCALE_FACTOR = 4.0       
-WINDOW_PX = 518            
-STRIDE_PX = 259           
+WINDOW_PX = 160            
+STRIDE_PX = 80          
 BATCH_SIZE = 4            
 PATCH_SIZE = 14            # DINOv2 patch size
 # -------------------
@@ -90,8 +90,8 @@ def extract_dense_feature(
         processor     : AutoImageProcessor
         device        : torch.device, if None, use model device
         upscale_factor: default 4.0
-        window_px     : default 518
-        stride_px     : 0.5 * window_px, default 259
+        window_px     : default 160
+        stride_px     : 0.5 * window_px, default 80
         batch_size    : default 4
 
     Returns:
