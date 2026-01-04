@@ -1,14 +1,14 @@
 #!/bin/bash
 
 WIDTH=720
-HEIGHT=400
+HEIGHT=544
 NUM_STEPS=10
 NUM_SEEDS=4
 FPS=24
 NUM_FRAMES=121 # 24 * 5 + 1
 AGENT_SPEED=0.5 # m/s, not faster than 0.5 
 VIDEO_LENGTH=$(( (${NUM_FRAMES} - 1) / ${FPS} ))
-INPUT_IMAGE=assets/diffusion/door.png
+INPUT_IMAGE=/cluster/project/cvg/students/shangwu/GEN3C/assets/diffusion/dataset_all/dataset_shard_2
 
 echo "Starting video generation with parameters:"
 echo "  NUM_SEEDS: ${NUM_SEEDS}"
@@ -19,7 +19,7 @@ echo "  NUM_STEPS: ${NUM_STEPS}"
 echo "  VIDEO_LENGTH: ${VIDEO_LENGTH} seconds"
 
 
-OUT_DIR=outputs/persistent
+OUT_DIR=outputs/dataset_all
 mkdir -p "${OUT_DIR}"
 source ~/miniconda3/etc/profile.d/conda.sh
 conda activate /cluster/project/cvg/students/shangwu/gen3c_env

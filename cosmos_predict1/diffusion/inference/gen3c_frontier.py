@@ -3,6 +3,7 @@ import argparse
 import numpy as np
 import torch
 from PIL import Image
+from pathlib import Path
 from cosmos_predict1.diffusion.inference.inference_utils import (
     add_common_arguments
 )
@@ -14,6 +15,23 @@ from cosmos_predict1.utils import misc
 import math
 from tqdm import tqdm
 from itertools import product
+
+
+def check_path(path_str):
+    path = Path(path_str)
+
+    if not path.exists():
+        raise FileNotFoundError(f"Path not found: {path_str}")
+
+    if path.is_dir():
+        return True
+    
+    if path.is_file():
+        img_extensions = {'.jpg', '.jpeg', '.png'}
+        if path.suffix.lower() in img_extensions:
+            return False
+        else:
+            raise ValueError(f"Unsupported file type: {path.name}, expected an image file.")
 
 
 def load_image_to_numpy(image_path, target_height, target_width):
@@ -38,7 +56,7 @@ def prepare_static_intrinsics(focal, principal_point, width, height, num_frames)
     intrinsics[:, 1, 2] = principal_point[0, 1] * height
     return intrinsics
 
-def run_multi_seed(model, seeds, prompt, theta_deg, phi_deg, w2c_tensor, intrinsics_tensor, input_depth, distance):
+def run_multi_seed(path_stem, model, seeds, prompt, theta_deg, phi_deg, w2c_tensor, intrinsics_tensor, input_depth, distance):
     """
     Logic: Load Image -> Seed/MoGE (ONCE) -> [Loop: Update Seed -> Infer]
     """
@@ -61,7 +79,7 @@ def run_multi_seed(model, seeds, prompt, theta_deg, phi_deg, w2c_tensor, intrins
     # Charlotte
     # ==============================
     original_video_save_folder = model.args.video_save_folder
-    model.args.video_save_folder = model.args.video_save_folder + f"/result_{theta_deg}_{phi_deg}"
+    model.args.video_save_folder = model.args.video_save_folder + "/" + path_stem + f"/result_{theta_deg}_{phi_deg}"
     cam_save_path = os.path.join(model.args.video_save_folder, f"camera_data.npz")
     
     w2c_all = generated_w2cs[0].detach().cpu().numpy()          # (T, 4, 4)
@@ -112,17 +130,24 @@ def run_multi_seed(model, seeds, prompt, theta_deg, phi_deg, w2c_tensor, intrins
             return_estimated_depths=True,
         )
 
-        # Collect per-frame depth and mask for this seed
+        # 3. Process and Move to CPU immediately
         if result is not None:
-            depth_all_seed = result.get("predicted_depth_all", None)   # (T, 1, H, W) or None
-            mask_all_seed  = result.get("predicted_mask_all", None)    # (T, 1, H, W) or None
+            depth_all_seed = result.get("predicted_depth_all", None)
+            mask_all_seed  = result.get("predicted_mask_all", None)
 
             if depth_all_seed is not None:
                 # Squeeze channel dimension -> (T, H, W)
                 depth_all_list.append(depth_all_seed[:, 0, ...])
             if mask_all_seed is not None:
                 mask_all_list.append(mask_all_seed[:, 0, ...])
+        
+        del result
+        
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache() # Frees the VRAM for the next seed
         # =======================
+        # cleanup per-seed cache
+        
 
     # Charlotte
     # =======================
@@ -152,10 +177,12 @@ def run_multi_seed(model, seeds, prompt, theta_deg, phi_deg, w2c_tensor, intrins
         print("Warning: depth_all_list is empty; no MoGe depth was saved for later frames.")
     # =========================================
 
-    model.args.video_save_folder = original_video_save_folder
+    model.args.video_save_folder = original_video_save_folder    
 
 def run_multi_traj_multi_seed(model, image_path, seeds, prompt, sample_angle=30, debug=False):
-    print(f"\n=== Genetrating Videos for {image_path} ===")
+    print(f"\n=== Genetrating Videos for {image_path} with debug mode: {debug} ===")
+
+    image_path_stem = Path(image_path).stem
 
     img_np = load_image_to_numpy(image_path, model.H, model.W) 
     
@@ -199,13 +226,13 @@ def run_multi_traj_multi_seed(model, image_path, seeds, prompt, sample_angle=30,
         
     else:
         # debug mode: only one trajectory
-        theta_deg_list = [15]
-        phi_deg_list = [5]
+        theta_deg_list = [0]
+        phi_deg_list = [0]
 
     for theta_deg, phi_deg in tqdm(product(theta_deg_list, phi_deg_list), 
                                total=len(theta_deg_list) * len(phi_deg_list)):
         print(f"Genereating Trajectory theta: {theta_deg}, phi: {phi_deg}")
-        run_multi_seed(model, seeds, prompt, theta_deg, phi_deg, 
+        run_multi_seed(image_path_stem, model, seeds, prompt, theta_deg, phi_deg, 
                             w2c_tensor, intrinsics_tensor, input_depth, distance)
 # -----------------------------------------------------------------------------
 # MAIN DRIVER
@@ -332,7 +359,20 @@ def main():
     seeds_to_test = sorted_unique.tolist()
     print(f"Using seeds to generate videos: {seeds_to_test}")
 
-    run_multi_traj_multi_seed(model, args.input_image, seeds_to_test, args.prompt, sample_angle=args.sample_angle)
+    # Start running the pipeline
+
+    # First check if the file is valid
+    is_dir = check_path(args.input_image)
+
+    if is_dir:
+        # if it is a directory, loop over
+        image_dir = Path(args.input_image)
+        for image_path in image_dir.iterdir():
+            print(f"Processing image: {image_path}")
+            if not check_path(image_path):
+                run_multi_traj_multi_seed(model, image_path, seeds_to_test, args.prompt, sample_angle=args.sample_angle, debug=True)
+    else:
+        run_multi_traj_multi_seed(model, args.input_image, seeds_to_test, args.prompt, sample_angle=args.sample_angle)
     
     # 3. Cleanup
     model.cleanup()
