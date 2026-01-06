@@ -22,13 +22,25 @@ def main():
     # Multi options.
     p.add_argument("--combine_policy", type=str, default="priority", choices=["priority", "soft"])
     p.add_argument("--sigma_deg", type=float, default=15.0)
-    p.add_argument("--traj_mask", type=str, default="fill", choices=["fill", "intersection"],
-                   help="Which per-trajectory mask defines validity when combining across trajectories.")
+    p.add_argument(
+        "--traj_mask",
+        type=str,
+        default="fill",
+        choices=["fill", "intersection"],
+        help="Mask notion for validity. Multi: combine uses this. Single: occlusion uses this.",
+    )
     p.add_argument("--save_per_trajectory", action="store_true")
 
     # Channel type option (rgb or dino) for single mode.
     p.add_argument("--channel_type", type=str, default="rgb", choices=["rgb", "dino"],
                    help="Channel type to use for variance computation in single mode.")
+
+    # Occlusion mode
+    p.add_argument(
+        "--occlude",
+        action="store_true",
+        help="Compute variance only where backward is valid but forward is invalid (efficient; avoids forward variance).",
+    )
 
     args = p.parse_args()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -46,6 +58,7 @@ def main():
             traj_mask=args.traj_mask,
             save_per_trajectory=args.save_per_trajectory,
             channel_type=args.channel_type,
+            occlude=args.occlude,
         )
         return
 
@@ -59,12 +72,16 @@ def main():
         mode=args.mode,
         device=device,
         channel_type=args.channel_type,
+        traj_mask=args.traj_mask,
+        occlude=args.occlude,
     )
 
-    np.savez(
-        args.output_npz,
+    payload = dict(
         mode=np.array(args.mode),
         channel_type=np.array(args.channel_type),
+        traj_mask=np.array(args.traj_mask),
+        occlude=np.array(bool(args.occlude)),
+
         var_map=r["var_map"].detach().cpu().numpy(),
         var_scalar=r["var_scalar"].detach().cpu().numpy(),
         valid_counts=r["valid_counts"].detach().cpu().numpy(),
@@ -74,6 +91,8 @@ def main():
         video_paths=np.array(r["video_paths"], dtype=object),
         camera_npz=np.array(r["camera_npz"]),
     )
+
+    np.savez(args.output_npz, **payload)
 
 
 if __name__ == "__main__":

@@ -28,7 +28,7 @@ def load_dino_features_at_t_from_list(video_paths, frame_index: int):
     H_ref, W_ref, D_ref = None, None, None
 
     for p in video_paths:
-        frame_uint8 = extract_frame_from_video_np(p, t=t_1based)  # [H, W, 3] uint8 RGB
+        frame_uint8 = extract_frame_from_video_np(p, t=t_1based)        # [H, W, 3] uint8 RGB
         H, W, _ = frame_uint8.shape
 
         feat_hwD = extract_dense_feature(
@@ -38,9 +38,12 @@ def load_dino_features_at_t_from_list(video_paths, frame_index: int):
             device=device,
         )  # torch [H, W, D] float32 CPU
 
-        feat_np = feat_hwD.numpy()                          # [H, W, D]
-        feat_chw = np.transpose(feat_np, (2, 0, 1))         # [D, H, W]
-        D = feat_chw.shape[0]
+        feat_np = feat_hwD.numpy()                                      # [H, W, D] float32
+        H2, W2, D = feat_np.shape
+        if (H2, W2) != (H, W):
+            raise ValueError(f"Unexpected DINO feature resolution: got {(H2,W2)} vs frame {(H,W)} for {p}")
+
+        feat_chw = np.transpose(feat_np, (2, 0, 1)).astype(np.float32)  # [D, H, W]
 
         if H_ref is None:
             H_ref, W_ref, D_ref = H, W, D
@@ -50,7 +53,7 @@ def load_dino_features_at_t_from_list(video_paths, frame_index: int):
             if D != D_ref:
                 raise ValueError(f"D mismatch: {p} produced D={D} vs expected D={D_ref}")
 
-        feats.append(feat_chw.astype(np.float32))
+        feats.append(feat_chw)
 
     feats_np = np.stack(feats, axis=0)                      # [N, D, H, W]
     return feats_np, list(video_paths)

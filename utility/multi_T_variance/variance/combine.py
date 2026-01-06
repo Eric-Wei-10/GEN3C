@@ -37,6 +37,8 @@ def combine_priority(per_traj_results, per_traj_dist_rad, traj_mask: str):
     M = len(per_traj_results)
     if M == 0:
         raise ValueError("No trajectory results to combine.")
+    if len(per_traj_dist_rad) != M:
+        raise ValueError(f"per_traj_dist_rad length {len(per_traj_dist_rad)} != num trajectories {M}.")
 
     # Sort trajectories by orientation distance from 0-orientation (ascending).
     # From most reliable to least.
@@ -93,6 +95,8 @@ def combine_soft_blend(per_traj_results, per_traj_dist_rad, sigma_deg: float, tr
     M = len(per_traj_results)
     if M == 0:
         raise ValueError("No trajectory results to combine.")
+    if len(per_traj_dist_rad) != M:
+        raise ValueError(f"per_traj_dist_rad length {len(per_traj_dist_rad)} != num trajectories {M}.")
 
     # Convert sigma from degrees to radians.
     sigma = math.radians(float(sigma_deg))

@@ -1,6 +1,5 @@
 # variance/core.py
 # Core helper functions for variance computation and warping (forward, backward, hybrid).
-import argparse
 import os
 import glob
 
@@ -269,7 +268,6 @@ def project_t_to_0_and_splat_bilinear(frame_t, depth_t, mask_t, K_t, w2c_t, K0, 
       mask:   [1, 1, H, W]   (1.0 where valid projection; 0.0 = invalid)
     """
     device = frame_t.device
-    dtype = depth_t.dtype
     C = frame_t.shape[0]
 
     # Flatten depth and mask.
@@ -291,7 +289,7 @@ def project_t_to_0_and_splat_bilinear(frame_t, depth_t, mask_t, K_t, w2c_t, K0, 
 
     # 2. Convert 3D points of frame t in camera t coordinates to 
     # homogeneous coordinates (x, y, z, 1) for matrix multiplication.
-    ones = torch.ones((1, H * W), device=device, dtype=dtype)
+    ones = torch.ones((1, H * W), device=device, dtype=depth_t.dtype)
     Xt_h = torch.cat([Xt, ones], dim=0)         # [4, H * W]
 
     # 3. Convert points from camera t to world coordinates.
@@ -363,28 +361,36 @@ def project_t_to_0_and_splat_bilinear(frame_t, depth_t, mask_t, K_t, w2c_t, K0, 
     idx01 = v01 * W + u00
     idx11 = v01 * W + u01
 
+    # Accumulate in float32 to avoid dtype mismatch (float16 colors * float32 weights -> float32).
+    acc_dtype = torch.float32
     # sum_colors: sum of weighted colors for each destination pixel in frame 0.
     # sum_weights: sum of weights for each destination pixel in frame 0.
-    sum_colors = torch.zeros((C, H * W), device=device, dtype=frame_t.dtype)
-    sum_weights = torch.zeros((H * W,), device=device, dtype=frame_t.dtype)
+    sum_colors = torch.zeros((C, H * W), device=device, dtype=acc_dtype)
+    sum_weights = torch.zeros((H * W,), device=device, dtype=acc_dtype)
+
+    colors_f = colors.to(acc_dtype)
 
     # For each of the 4 neighbors,
     # - Add the weighted color to sum_colors into the destination pixel bin.
     # - Add the weight to sum_weights into the destination pixel bin.
     # Note: using scatter_add_ to handle multiple contributions to the same pixel.
     for idx, w in [(idx00, w00), (idx10, w10), (idx01, w01), (idx11, w11)]:
-        sum_colors.scatter_add_(1, idx.unsqueeze(0).expand(C, -1), colors * w.unsqueeze(0))
-        sum_weights.scatter_add_(0, idx, w)
+        w_f = w.to(acc_dtype)
+        sum_colors.scatter_add_(1, idx.unsqueeze(0).expand(C, -1), colors_f * w_f.unsqueeze(0))
+        sum_weights.scatter_add_(0, idx, w_f)
 
     # Compute final warped colors by normalizing with sum_weights: sum_colors / sum_weights.
     # Avoid division by zero by adding a small epsilon.
-    warped_flat = sum_colors / (sum_weights.unsqueeze(0) + 1e-8)
+    warped_flat = sum_colors / (sum_weights.unsqueeze(0) + 1e-8)   # float32
     # Mask indicating which pixels received any contribution (sum_weights > 0).
-    mask_flat = (sum_weights > 0).float()
+    mask_flat = (sum_weights > 0).float()                          # float32
+
+    # Cast warped back to the original frame dtype (keeps fp16 memory benefit for DINO).
+    warped_flat = warped_flat.to(frame_t.dtype)
 
     # Reshape back to image tensor [1, C, H, W] and [1, 1, H, W].
-    warped = warped_flat.view(C, H, W).unsqueeze(0)
-    mask = mask_flat.view(1, H, W).unsqueeze(0)
+    warped = warped_flat.view(C, H, W).unsqueeze(0)                # [1, C, H, W]
+    mask = mask_flat.view(1, H, W).unsqueeze(0)                    # [1, 1, H, W]
 
     return warped, mask
 

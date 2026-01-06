@@ -16,15 +16,23 @@ if [ -z "${PY}" ]; then
 fi
 
 # Args:
-# 1 run_mode: single|multi
-# 2 frame_index
-# 3 mode: frame_t|forward|backward|hybrid
-# 4 output_dir
-# 5 traj_dir (single) OR inputs_root (multi)
-# 6 traj_mask: fill|intersection
-# 7 channel_type: rgb|dino                  (optional; default rgb)
-# 8 combine_policy (multi): priority|soft   (optional; default priority)
-# 9 sigma_deg (multi): e.g. 15              (optional; default 15)
+# 1  run_mode: single|multi
+# 2  frame_index
+# 3  mode: frame_t|forward|backward|hybrid
+# 4  output_dir
+# 5  traj_dir (single) OR inputs_root (multi)
+#    - single: can be a trajectory folder (contains camera_data.npz)
+#              or an inputs_root folder (contains result_* subfolders) -> auto-pick the first valid result_*
+# 6  traj_mask: fill|intersection                 (required)
+# 7  channel_type: rgb|dino                       (optional; default rgb)
+# 8  combine_policy (multi): priority|soft        (optional; default priority)
+# 9  sigma_deg (multi): e.g. 15                   (optional; default 15)
+# 10 occlude: 0|1|false|true                      (optional; default 0)
+#
+# Examples:
+#   bash run.sh single 96 backward outputs ./inputs/result_-15_0 fill rgb priority 15 1
+#   bash run.sh single 96 backward outputs ./inputs fill rgb priority 15 1
+#   bash run.sh multi   96 backward outputs ./inputs fill dino priority 15 0
 
 RUN_MODE="${1:-multi}"
 FRAME_INDEX="${2:-96}"
@@ -35,16 +43,16 @@ TRAJ_MASK="${6:-}"
 CHANNEL_TYPE="${7:-rgb}"
 COMBINE_POLICY="${8:-priority}"
 SIGMA_DEG="${9:-15}"
+OCCLUDE_RAW="${10:-0}"
 
 if [ -z "${TRAJ_MASK}" ]; then
   echo "ERROR: traj_mask is required."
   echo ""
   echo "Single examples:"
   echo "  bash run.sh single 96 backward outputs ./inputs/result_-15_0 fill rgb"
-  echo "  bash run.sh single 96 backward outputs ./inputs/result_-15_0 fill dino"
+  echo "  bash run.sh single 96 backward outputs ./inputs fill rgb"
   echo ""
   echo "Multi examples:"
-  echo "  bash run.sh multi 96 backward outputs ./inputs fill rgb priority 15"
   echo "  bash run.sh multi 96 backward outputs ./inputs fill dino priority 15"
   exit 1
 fi
@@ -59,12 +67,49 @@ if [ "${CHANNEL_TYPE}" != "rgb" ] && [ "${CHANNEL_TYPE}" != "dino" ]; then
   exit 1
 fi
 
+# main.py defines --occlude as a flag (store_true), so we must NOT pass a value.
+OCCLUDE_FLAG=""
+case "${OCCLUDE_RAW}" in
+  1|true|TRUE|True|yes|YES|y|Y) OCCLUDE_FLAG="--occlude" ;;
+  0|false|FALSE|False|no|NO|n|N|"") OCCLUDE_FLAG="" ;;
+  *)
+    echo "ERROR: occlude must be 0/1/true/false, got: ${OCCLUDE_RAW}"
+    exit 1
+    ;;
+esac
+
 mkdir -p "$OUTPUT_DIR"
 timestamp="$(date +%Y%m%d_%H%M%S)"
 
 if [ "$RUN_MODE" = "single" ]; then
-  TRAJ_DIR="$ARG5"
-  [ -d "$TRAJ_DIR" ] || { echo "ERROR: traj_dir '$TRAJ_DIR' does not exist."; exit 1; }
+  CANDIDATE="$ARG5"
+  [ -d "$CANDIDATE" ] || { echo "ERROR: '$CANDIDATE' does not exist."; exit 1; }
+
+  # If candidate looks like a trajectory dir (has camera_data.npz), use it directly.
+  if [ -f "$CANDIDATE/camera_data.npz" ]; then
+    TRAJ_DIR="$CANDIDATE"
+  else
+    # Otherwise treat as inputs_root and auto-pick the first valid result_* folder containing camera_data.npz.
+    found=""
+    shopt -s nullglob
+    for d in "$CANDIDATE"/result_*; do
+      if [ -d "$d" ] && [ -f "$d/camera_data.npz" ]; then
+        found="$d"
+        break
+      fi
+    done
+    shopt -u nullglob
+
+    if [ -z "$found" ]; then
+      echo "ERROR: '$CANDIDATE' is not a trajectory dir (no camera_data.npz),"
+      echo "and no valid result_* trajectory folder was found inside it."
+      exit 1
+    fi
+
+    TRAJ_DIR="$found"
+    echo "[INFO] Single mode: inputs_root given, auto-selected traj_dir = $TRAJ_DIR"
+  fi
+
   out_base="single_$(basename "$TRAJ_DIR")_${MODE}_t${FRAME_INDEX}_${timestamp}"
   OUTPUT_NPZ="$OUTPUT_DIR/${out_base}.npz"
 else
@@ -84,6 +129,9 @@ echo "  frame_index    = ${FRAME_INDEX}"
 echo "  mode           = ${MODE}"
 echo "  traj_mask      = ${TRAJ_MASK}"
 echo "  channel_type   = ${CHANNEL_TYPE}"
+echo "  combine_policy = ${COMBINE_POLICY}"
+echo "  sigma_deg      = ${SIGMA_DEG}"
+echo "  occlude        = ${OCCLUDE_RAW}"
 echo "  output_npz     = ${OUTPUT_NPZ}"
 echo "  out_prefix     = ${OUT_PREFIX}"
 
@@ -93,12 +141,14 @@ if [ "$RUN_MODE" = "single" ]; then
     --traj_dir "$TRAJ_DIR" \
     --frame_index "$FRAME_INDEX" \
     --mode "$MODE" \
+    --traj_mask "$TRAJ_MASK" \
     --channel_type "$CHANNEL_TYPE" \
+    --combine_policy "$COMBINE_POLICY" \
+    --sigma_deg "$SIGMA_DEG" \
+    ${OCCLUDE_FLAG} \
     --output_npz "$OUTPUT_NPZ"
 else
   echo "[INFO] Running multi-trajectory variance"
-  echo "  combine_policy = ${COMBINE_POLICY}"
-  echo "  sigma_deg      = ${SIGMA_DEG}"
   "$PY" "$ROOT_DIR/main.py" \
     --inputs_root "$INPUTS_ROOT" \
     --frame_index "$FRAME_INDEX" \
@@ -107,7 +157,7 @@ else
     --combine_policy "$COMBINE_POLICY" \
     --sigma_deg "$SIGMA_DEG" \
     --channel_type "$CHANNEL_TYPE" \
-    --save_per_trajectory \
+    ${OCCLUDE_FLAG} \
     --output_npz "$OUTPUT_NPZ"
 fi
 

@@ -89,16 +89,34 @@ def compute_variance_for_one_trajectory_dir(
     frame_index: int,
     mode: str,
     device: torch.device,
-    channel_type: str = "rgb",   # "rgb" or "dino"
+    channel_type: str = "rgb",     # "rgb" or "dino"
+    traj_mask: str = "fill",       # "fill" or "intersection" (accepted for API consistency; both masks are still computed)
+    occlude: bool = False,         # if True: keep only pixels valid in backward AND invalid in forward (geometry-only forward mask)
 ):
     """
     Compute variance for a single trajectory directory.
-    
+
     :param traj_dir: Path to the trajectory directory.
     :param frame_index: The chosen frame index.
     :param mode: One of "frame_t", "forward", "backward", or "hybrid".
     :param device: Torch device to use for computation.
+    :param channel_type: "rgb" or "dino".
+    :param traj_mask:
+      - This function always computes and returns BOTH fill_mask and intersection_mask.
+      - traj_mask is accepted so callers can pass it consistently (single & multi).
+      - We also return selected_mask based on traj_mask for convenience.
+    :param occlude:
+      - occlude=True is only supported for mode='backward' (by design).
+      - It computes an occlusion gating mask: backward_valid & (~forward_valid)
+        where forward_valid is derived from depth0 projection (geometry-only).
+      - Efficient: does NOT compute forward variance; only builds a forward validity mask.
     """
+    if traj_mask not in ("fill", "intersection"):
+        raise ValueError(f"traj_mask must be 'fill' or 'intersection', got: {traj_mask}")
+
+    if occlude and mode != "backward":
+        raise ValueError("occlude=True currently supports mode='backward' only.")
+
     camera_npz = find_camera_npz(traj_dir)
     video_paths = get_ordered_videos_by_seed(traj_dir)
 
@@ -116,12 +134,16 @@ def compute_variance_for_one_trajectory_dir(
 
     # Mode: frame_t.
     if mode == "frame_t":
+        if occlude:
+            raise ValueError("occlude=True is not defined for mode='frame_t' (no forward/backward masks exist).")
+
         var_map = torch.var(frames_t, dim=0, unbiased=True)     # [C, H, W]
         var_scalar = var_map.mean(dim=0)                        # [H, W]
         valid_counts = torch.full((H, W), float(N), device=device, dtype=torch.float32)
 
         fill_mask = torch.ones((H, W), device=device, dtype=torch.float32)
         intersection_mask = torch.ones((H, W), device=device, dtype=torch.float32)
+        selected_mask = fill_mask if traj_mask == "fill" else intersection_mask
 
         return {
             "var_map": var_map,
@@ -129,6 +151,8 @@ def compute_variance_for_one_trajectory_dir(
             "valid_counts": valid_counts,
             "fill_mask": fill_mask,
             "intersection_mask": intersection_mask,
+            "selected_mask": selected_mask,
+            "traj_mask": traj_mask,
             "H": H, "W": W, "N": N,
             "video_paths": ordered_paths,
             "camera_npz": camera_npz,
@@ -196,7 +220,7 @@ def compute_variance_for_one_trajectory_dir(
                 K_t=K_t, w2c_t=w2c_t,
                 K0=K0, w2c0=w2c0,
                 pix_flat=pix_flat,
-                H=H, W=W
+                H=H, W=W,
             )
             warped_list.append(w_i)
             mask_list.append(m_i)
@@ -214,6 +238,16 @@ def compute_variance_for_one_trajectory_dir(
     else:
         raise ValueError(f"Unknown mode: {mode}")
 
+    # Occlusion gating (backward_valid & ~forward_valid).
+    if occlude:
+        # Geometry-only forward validity mask (doesn't depend on channels or per-video content).
+        Xw, valid0 = backproject_depth0_to_world(depth0, K0, w2c0)
+        _, fwd_mask_1 = build_forward_grid_and_mask(Xw, valid0, K_t, w2c_t, H, W)  # [1, 1, H, W]
+        fwd_maskN = fwd_mask_1.expand(N, -1, -1, -1)                               # [N, 1, H, W] view
+
+        # Keep pixels valid in backward but invalid in forward
+        masks_all = masks_all * (1.0 - fwd_maskN)
+
     # Compute masked variance across videos.
     var_map, valid_counts = masked_variance_across_videos(warped_all, masks_all)
     var_scalar = var_map.mean(dim=0)
@@ -221,6 +255,7 @@ def compute_variance_for_one_trajectory_dir(
     # Two types of coverage masks: "fill" and "intersection".
     fill_mask = (valid_counts >= 2.0).float()
     intersection_mask = (valid_counts >= float(N)).float()
+    selected_mask = fill_mask if traj_mask == "fill" else intersection_mask
 
     return {
         "var_map": var_map,
@@ -228,6 +263,8 @@ def compute_variance_for_one_trajectory_dir(
         "valid_counts": valid_counts,
         "fill_mask": fill_mask,
         "intersection_mask": intersection_mask,
+        "selected_mask": selected_mask,
+        "traj_mask": traj_mask,
         "H": H, "W": W, "N": N,
         "video_paths": ordered_paths,
         "camera_npz": camera_npz,

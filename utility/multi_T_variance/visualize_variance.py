@@ -95,10 +95,10 @@ def main():
     args = p.parse_args()
 
     data = _load_npz(args.result_npz)
-    if "mode" in data and np.asarray(data["mode"]).shape == ():
-        mode = str(data["mode"].item())
-    else:
-        mode = str(data.get("mode", "unknown"))
+
+    mode = str(data["mode"].item()) if ("mode" in data and np.asarray(data["mode"]).shape == ()) else str(data.get("mode", "unknown"))
+    channel_type = str(data["channel_type"].item()) if ("channel_type" in data and np.asarray(data["channel_type"]).shape == ()) else str(data.get("channel_type", "unknown"))
+    occlude = bool(data["occlude"]) if "occlude" in data else False
 
     t = int(data["frame_index"]) if "frame_index" in data else -1
 
@@ -115,7 +115,7 @@ def main():
         _save_im(
             var_disp,
             f"{args.out_prefix}_variance.png",
-            title=f"Combined variance on frame 0 (mode={mode}, t={t}, traj_mask={args.traj_mask})",
+            title=f"Combined variance (mode={mode}, t={t}, traj_mask={args.traj_mask}, channel={channel_type}, occlude={occlude})",
             cbar_label="Variance",
             boundary_mask=cm_bool,
             cmap_name="viridis",
@@ -126,7 +126,7 @@ def main():
         _save_im(
             cm.astype(np.float32),
             f"{args.out_prefix}_coverage.png",
-            title=f"Combined coverage (traj_mask={str(data.get('traj_mask','?'))})",
+            title=f"Combined coverage (traj_mask={str(data.get('traj_mask','?'))}, occlude={occlude})",
             cbar_label="mask",
             boundary_mask=cm_bool,
             cmap_name=None,
@@ -185,11 +185,7 @@ def main():
             print("[INFO] No source_trajectory_index in NPZ; skipping source output.")
 
     else:
-        # Single case.
-        if "var_scalar" in data:
-            var = data["var_scalar"].astype(np.float32)
-        else:
-            var = data["var_map"].mean(axis=0).astype(np.float32)
+        var = data["var_scalar"].astype(np.float32) if "var_scalar" in data else data["var_map"].mean(axis=0).astype(np.float32)
 
         if args.traj_mask == "fill":
             if "fill_mask" not in data:
@@ -207,7 +203,7 @@ def main():
         _save_im(
             var_disp,
             f"{args.out_prefix}_variance.png",
-            title=f"Single trajectory variance on frame 0 (mode={mode}, t={t}, traj_mask={args.traj_mask})",
+            title=f"Single variance (mode={mode}, t={t}, traj_mask={args.traj_mask}, channel={channel_type}, occlude={occlude})",
             cbar_label="Variance",
             boundary_mask=cov_bool,
             cmap_name="viridis",
@@ -218,13 +214,13 @@ def main():
         _save_im(
             cov.astype(np.float32),
             f"{args.out_prefix}_coverage.png",
-            title="Single trajectory coverage",
+            title=f"Single coverage (traj_mask={args.traj_mask}, occlude={occlude})",
             cbar_label="mask",
             boundary_mask=cov_bool,
             cmap_name=None,
         )
 
-        # no source for single
+        # no source for single.
         print("[INFO] Single NPZ: source output not applicable; skipping.")
 
 
