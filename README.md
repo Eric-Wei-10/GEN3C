@@ -1,5 +1,74 @@
 # GEN3C: 3D-Informed World-Consistent Video Generation with Precise Camera Control
 
+
+**Frontier-WM edition**
+
+Preprocessing scripts live in [`preprocess/`](preprocess/). Run all commands from that directory.
+
+### `preprocess/get_w2c.py` — Generate W2C matrix + update YAML config
+
+Takes a camera position `(x, y, z)` and a horizontal heading angle, computes the world-to-camera 4×4 matrix, and patches it into `FrontierNet/config/hm3d_exploration_scene_5.yaml`.
+
+```bash
+python get_w2c.py <x> <y> <z> <angle_deg>
+# angle: 0 = +X axis, 90 = +Y axis, 180 = -X axis, 270 = -Y axis
+```
+
+### `preprocess/data_filtering.py` — Depth-based image filtering
+
+Runs MoGE depth estimation on a directory of RGB images and filters out views that are not suitable for exploration (collision with nearby geometry, flat/invalid depth, or not explorable after a simulated forward move). Saves per-image depth visualizations and categorized result lists.
+
+```bash
+python data_filtering.py \
+    --image_dir /path/to/images \
+    --out_dir   /path/to/output \
+    [--forward 1.0]          # simulated forward move in metres (default: 1.0)
+    [--depth_threshold 0.5]  # explorable depth threshold in metres (default: 0.5)
+    [--delete_invalid]       # delete source images that fail checks
+    [--device cuda]
+```
+
+Output lists written to `--out_dir`:
+- `explorable_images.txt` — passed all checks
+- `collision_images.txt` — object too close in centre region
+- `inexplorable_images.txt` — too little space ahead
+- `inf_depth_images.txt`, `depth_too_far_images.txt`, `depth_flat_images.txt` — depth quality failures
+
+Resume-safe: already-processed images are skipped automatically.
+
+### `preprocess/random_pose.py` — Sample random poses, render, and filter
+
+Samples N random camera poses from a `.glb` scene and renders each one. Optionally runs `data_filtering` on each render to discard invalid views.
+
+```bash
+# Render 10 random poses
+python random_pose.py --n 10 --glb /path/to/scene.glb
+
+# Render + filter invalid views (deletes bad images automatically)
+python random_pose.py --n 10 --glb /path/to/scene.glb --filter \
+    [--seed 42] [--output ../dummy_render] \
+    [--forward 1.0] [--depth_threshold 0.5] [--device cuda]
+```
+
+Pose sampling distribution:
+
+| Parameter | Distribution |
+|-----------|-------------|
+| x | Uniform[−0.3, 7.5] |
+| y | Uniform[−3.6, 4.4] |
+| z | Choice {1.0, −2.0} |
+| angle | Choice {0°, 90°, 180°, 270°} |
+
+### `preprocess/random_pose.sh` — SLURM batch job
+
+Submits `random_pose.py` to the cluster (RTX 4090, 16 GB RAM, 24 h limit):
+
+```bash
+sbatch random_pose.sh
+```
+
+Samples 100 poses from `../FrontierNet/eval_data/mesh/000000-kfPV7w3FaU5.glb`, filters invalid views, and saves results to `../dummy_render/`.
+
 <!-- Note: this video is hosted by GitHub and gets embedded automatically when viewing in the GitHub UI -->
 
 https://github.com/user-attachments/assets/247e1719-9f8f-4504-bfa3-f9706bd8682d
