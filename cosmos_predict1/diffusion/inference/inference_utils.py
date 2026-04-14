@@ -550,6 +550,7 @@ def generate_world_from_video(
     seed: int,
     condition_latent: torch.Tensor,
     num_input_frames: int,
+    image_name_stem: Optional[str] = None,
 ) -> Tuple[np.array, list, list]:
     """Generate video using a conditioning video/image input.
 
@@ -592,6 +593,7 @@ def generate_world_from_video(
         condition_latent=condition_latent,
         num_condition_t=num_of_latent_condition,
         condition_augment_sigma=augment_sigma,
+        image_name_stem=image_name_stem,
     )
     return sample
 

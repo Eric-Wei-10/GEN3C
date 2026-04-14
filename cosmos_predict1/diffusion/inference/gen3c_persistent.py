@@ -275,6 +275,7 @@ class Gen3cPersistentModel():
                              fps: int | float,
                              overlap_frames:int = 1,
                              return_estimated_depths: bool = False,
+                             image_name_stem: str | None = None,
                              video_save_quality: int = 5,
                              save_buffer: bool | None = None) -> dict | None:
 
@@ -335,6 +336,7 @@ class Gen3cPersistentModel():
             negative_prompt=self.args.negative_prompt,
             rendered_warp_images=rendered_warp_images,
             rendered_warp_masks=rendered_warp_masks,
+            image_name_stem=image_name_stem,
         )
         if generated_output is None:
             log.critical("Guardrail blocked video2world generation.")

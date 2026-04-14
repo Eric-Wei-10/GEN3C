@@ -1,0 +1,1 @@
+python3 /cluster/project/cvg/students/shangwu/GEN3C/utility/post_process/post_process.py --camera_npz /cluster/project/cvg/students/shangwu/GEN3C/outputs/persistent/result_0_0/camera_data.npz

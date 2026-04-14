@@ -249,3 +249,8 @@ onelogger.log
 # Others
 *.err
 *.out
+
+assets/diffusion/dataset_all/
+assets/diffusion/dataset_small/
+features_analysis/
+dummy_render/

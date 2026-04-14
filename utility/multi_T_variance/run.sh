@@ -38,7 +38,9 @@ RUN_MODE="${1:-multi}"
 FRAME_INDEX="${2:-96}"
 MODE="${3:-backward}"
 OUTPUT_DIR="${4:-$ROOT_DIR/outputs}"
-ARG5="${5:-$ROOT_DIR/inputs}"
+# OUTPUT_DIR="${4:-$ROOT_DIR/outputs/multi_T_variance}"
+# ARG5="${5:-$ROOT_DIR/inputs}"
+ARG5="${5:-}"
 TRAJ_MASK="${6:-}"
 CHANNEL_TYPE="${7:-rgb}"
 COMBINE_POLICY="${8:-priority}"
@@ -79,8 +81,9 @@ case "${OCCLUDE_RAW}" in
 esac
 
 mkdir -p "$OUTPUT_DIR"
-timestamp="$(date +%Y%m%d_%H%M%S)"
 
+INPUTS_ROOT="--"
+TRAJ_DIR="--"
 if [ "$RUN_MODE" = "single" ]; then
   CANDIDATE="$ARG5"
   [ -d "$CANDIDATE" ] || { echo "ERROR: '$CANDIDATE' does not exist."; exit 1; }
@@ -110,12 +113,12 @@ if [ "$RUN_MODE" = "single" ]; then
     echo "[INFO] Single mode: inputs_root given, auto-selected traj_dir = $TRAJ_DIR"
   fi
 
-  out_base="single_$(basename "$TRAJ_DIR")_${MODE}_t${FRAME_INDEX}_${timestamp}"
+  out_base="single_$(basename "$TRAJ_DIR")_${MODE}_t${FRAME_INDEX}"
   OUTPUT_NPZ="$OUTPUT_DIR/${out_base}.npz"
 else
   INPUTS_ROOT="$ARG5"
   [ -d "$INPUTS_ROOT" ] || { echo "ERROR: inputs_root '$INPUTS_ROOT' does not exist."; exit 1; }
-  out_base="combined_${COMBINE_POLICY}_${MODE}_t${FRAME_INDEX}_${timestamp}"
+  out_base="combined_${COMBINE_POLICY}_${MODE}_t${FRAME_INDEX}"
   OUTPUT_NPZ="$OUTPUT_DIR/${out_base}.npz"
 fi
 
@@ -123,6 +126,7 @@ OUT_PREFIX="$OUTPUT_DIR/${out_base}"
 
 echo "[INFO] Using:"
 echo "  ROOT_DIR       = ${ROOT_DIR}"
+echo "  INPUTS_ROOT    = ${INPUTS_ROOT}"
 echo "  PY             = ${PY}"
 echo "  RUN_MODE       = ${RUN_MODE}"
 echo "  frame_index    = ${FRAME_INDEX}"

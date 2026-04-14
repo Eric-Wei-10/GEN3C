@@ -1,11 +1,12 @@
 #!/bin/bash -l
-#SBATCH --job-name=sun1_40g
-#SBATCH --output=job_%j.out
-#SBATCH --error=job_%j.err
+#SBATCH --job-name=data_gen
+#SBATCH --output=/cluster/project/cvg/students/shangwu/GEN3C/log/job_%j.out
+#SBATCH --error=/cluster/project/cvg/students/shangwu/GEN3C/log/job_%j.err
 #SBATCH --mem-per-cpu=48g
 #SBATCH --ntasks=1
-#SBATCH --time=20:20:00
+#SBATCH --time=24:00:00
 #SBATCH --gpus=a100-pcie-40gb:1
+#SBATCH --account ls_polle
 
 
 module load stack/2024-06

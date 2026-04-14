@@ -5,11 +5,28 @@ import torch
 from variance.single_T import compute_variance_for_one_trajectory_dir
 from variance.multi_T import run_multi_from_inputs_root
 
+def valid_frame_index(value):
+    """
+    Custom validation function: checks if input is an integer, >= 0, and divisible by 12.
+    """
+    try:
+        ivalue = int(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"Input '{value}' is not a valid integer.")
+
+    if ivalue < 0:
+        raise argparse.ArgumentTypeError(f"frame_index must be non-negative (current value: {ivalue}).")
+    
+    if ivalue % 12 != 0:
+        raise argparse.ArgumentTypeError(f"frame_index must be a multiple of 12 (current value: {ivalue}).")
+    
+    return ivalue
+
 
 def main():
     p = argparse.ArgumentParser(description="Variance pipeline for single or multi trajectory inputs/")
 
-    p.add_argument("--frame_index", type=int, required=True)
+    p.add_argument("--frame_index", type=valid_frame_index, required=True)
     p.add_argument("--mode", type=str, default="backward", choices=["frame_t", "forward", "backward", "hybrid"])
     p.add_argument("--output_npz", type=str, required=True)
 
@@ -47,9 +64,10 @@ def main():
 
     # Run multi mode.
     if args.inputs_root is not None:
+        print("Running multi mode.")
         run_multi_from_inputs_root(
             inputs_root=args.inputs_root,
-            frame_index=args.frame_index,
+            frame_index=args.frame_index // 12,
             mode=args.mode,
             output_npz=args.output_npz,
             device=device,
@@ -68,7 +86,7 @@ def main():
     # Run single mode.
     r = compute_variance_for_one_trajectory_dir(
         traj_dir=args.traj_dir,
-        frame_index=args.frame_index,
+        frame_index=args.frame_index // 12,
         mode=args.mode,
         device=device,
         channel_type=args.channel_type,

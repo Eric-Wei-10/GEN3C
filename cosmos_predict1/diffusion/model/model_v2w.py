@@ -24,6 +24,9 @@ from cosmos_predict1.diffusion.model.model_t2w import DiffusionT2WModel, broadca
 from cosmos_predict1.diffusion.module.parallel import cat_outputs_cp, split_inputs_cp
 from cosmos_predict1.utils import log, misc
 
+import os
+import numpy as np
+
 
 class DiffusionV2WModel(DiffusionT2WModel):
     def __init__(self, config):
@@ -81,6 +84,7 @@ class DiffusionV2WModel(DiffusionT2WModel):
 
         return condition
 
+    # new version with feature save
     def generate_samples_from_batch(
         self,
         data_batch: dict,
@@ -94,25 +98,9 @@ class DiffusionV2WModel(DiffusionT2WModel):
         num_condition_t: Optional[int] = None,
         condition_augment_sigma: float = None,
         add_input_frames_guidance: bool = False,
+        image_name_stem: Optional[str] = None,
     ) -> Tensor:
-        """Generates video samples conditioned on input frames.
-
-        Args:
-            data_batch: Input data dictionary
-            guidance: Classifier-free guidance scale
-            seed: Random seed for reproducibility
-            state_shape: Shape of output tensor (defaults to model's state shape)
-            n_sample: Number of samples to generate (defaults to batch size)
-            is_negative_prompt: Whether to use negative prompting
-            num_steps: Number of denoising steps
-            condition_latent: Conditioning frames tensor (B,C,T,H,W)
-            num_condition_t: Number of frames to condition on
-            condition_augment_sigma: Noise level for condition augmentation
-            add_input_frames_guidance: Whether to apply guidance to input frames
-
-        Returns:
-            Generated video samples tensor
-        """
+        print("Generate samples from seed: {seed}")
         assert condition_latent is not None, "condition_latent should be provided"
         condition, uncondition = self._get_conditions(
             data_batch, is_negative_prompt, condition_latent, num_condition_t, add_input_frames_guidance
@@ -121,38 +109,215 @@ class DiffusionV2WModel(DiffusionT2WModel):
         self.scheduler.set_timesteps(num_steps)
         if n_sample is None:
             n_sample = condition_latent.shape[0]
+
         xt = torch.randn(size=(n_sample,) + tuple(state_shape), **self.tensor_kwargs) * self.scheduler.init_noise_sigma
 
         to_cp = self.net.is_context_parallel_enabled
         if to_cp:
             xt = split_inputs_cp(x=xt, seq_dim=2, cp_group=self.net.cp_group)
 
-        for t in self.scheduler.timesteps:
-            self.scheduler._init_step_index(t)
-            sigma = self.scheduler.sigmas[self.scheduler.step_index].to(**self.tensor_kwargs)
-            # Form new noise from latent
-            xt = xt.to(**self.tensor_kwargs)
-            new_xt, latent, indicator = self._augment_noise_with_latent(
-                xt, sigma, condition, condition_augment_sigma=condition_augment_sigma, seed=seed
-            )
-            new_xt = new_xt.to(**self.tensor_kwargs)
-            new_xt_scaled = self.scheduler.scale_model_input(new_xt, timestep=t)
-            # Predict the noise residual
-            t = t.to(**self.tensor_kwargs)
-            net_output_cond = self.net(x=new_xt_scaled, timesteps=t, **condition.to_dict())
-            net_output_uncond = self.net(x=new_xt_scaled, timesteps=t, **uncondition.to_dict())
-            net_output = net_output_cond + guidance * (net_output_cond - net_output_uncond)
-            # Replace indicated output with latent
-            latent_unscaled = self._reverse_precondition_output(latent, xt=new_xt, sigma=sigma)
-            new_output = indicator * latent_unscaled + (1 - indicator) * net_output
-            # Compute the previous noisy sample x_t -> x_t-1
-            xt = self.scheduler.step(new_output, t, new_xt).prev_sample
-        samples = xt
+        # --------------------------
+        # Feature capture: SETUP ONCE (outside loop)
+        # --------------------------
 
-        if to_cp:
-            samples = cat_outputs_cp(samples, seq_dim=2, cp_group=self.net.cp_group)
+        feature_npz_path = f"/cluster/project/cvg/students/shangwu/GEN3C/features_analysis/dit_features/seed_{seed}_{image_name_stem}.npz"
+        os.makedirs(os.path.dirname(feature_npz_path), exist_ok=True)
+        capture_uncond = False
+        capture_all_modules = False
+        store_dtype = torch.float16
+
+        os.makedirs(os.path.dirname(feature_npz_path), exist_ok=True)
+        capture_features = feature_npz_path is not None
+        
+        patterns = [
+            "blocks.block27.blocks.2.block.layer2",
+        ]
+
+
+        feats = {}          # key -> list of np arrays (one per captured step)
+        meta_timesteps = []
+        meta_sigmas = []
+
+        _hook_handles = []
+        _capture_on = {"cond": False, "uncond": False}
+
+        def _want_module(name: str) -> bool:
+            if capture_all_modules:
+                return True
+            return any(p in name for p in patterns)
+
+        def _hook_fn(name: str, which: str):
+            def _hook(module, inputs, output):
+                if not _capture_on[which]:
+                    return
+                out = output[0] if isinstance(output, (tuple, list)) else output
+                if not torch.is_tensor(out):
+                    return
+                # store CPU tensor (smaller dtype), convert to numpy later
+                key = f"{which}:{name}"
+                feats.setdefault(key, []).append(out.detach().to("cpu", dtype=store_dtype))
+            return _hook
+
+        if capture_features:
+            for name, module in self.net.named_modules():
+                if _want_module(name):
+                    _hook_handles.append(module.register_forward_hook(_hook_fn(name, "cond")))
+                    if capture_uncond:
+                        _hook_handles.append(module.register_forward_hook(_hook_fn(name, "uncond")))
+            log.info(f"[feature-capture] hooked {len(_hook_handles)} modules")
+
+        # ensure hooks get removed even if something crashes during sampling
+        try:
+            for ind, t in enumerate(self.scheduler.timesteps):
+                self.scheduler._init_step_index(t)
+                sigma = self.scheduler.sigmas[self.scheduler.step_index].to(**self.tensor_kwargs)
+
+                xt = xt.to(**self.tensor_kwargs)
+                new_xt, latent, indicator = self._augment_noise_with_latent(
+                    xt, sigma, condition, condition_augment_sigma=condition_augment_sigma, seed=seed
+                )
+                new_xt = new_xt.to(**self.tensor_kwargs)
+                new_xt_scaled = self.scheduler.scale_model_input(new_xt, timestep=t)
+
+                t = t.to(**self.tensor_kwargs)
+
+                # --------------------------
+                # Feature capture: toggle per step
+                # --------------------------
+                do_capture_step = True # Save every features
+                if do_capture_step:
+                    meta_timesteps.append(int(t.item()))
+                    meta_sigmas.append(float(sigma.item()))
+
+                if do_capture_step:
+                    _capture_on["cond"] = True
+                net_output_cond = self.net(x=new_xt_scaled, timesteps=t, **condition.to_dict())
+                if do_capture_step:
+                    _capture_on["cond"] = False
+
+                if capture_uncond and do_capture_step:
+                    _capture_on["uncond"] = True
+                net_output_uncond = self.net(x=new_xt_scaled, timesteps=t, **uncondition.to_dict())
+                if capture_uncond and do_capture_step:
+                    _capture_on["uncond"] = False
+
+                net_output = net_output_cond + guidance * (net_output_cond - net_output_uncond)
+
+                latent_unscaled = self._reverse_precondition_output(latent, xt=new_xt, sigma=sigma)
+                new_output = indicator * latent_unscaled + (1 - indicator) * net_output
+                xt = self.scheduler.step(new_output, t, new_xt).prev_sample
+
+            samples = xt
+            if to_cp:
+                samples = cat_outputs_cp(samples, seq_dim=2, cp_group=self.net.cp_group)
+
+        finally:
+            # always remove hooks
+            if capture_features:
+                for h in _hook_handles:
+                    h.remove()
+                _hook_handles.clear()
+
+        # --------------------------
+        # Feature capture: SAVE ONCE (after loop)
+        # --------------------------
+        if capture_features:
+            save_dict = {
+                "timesteps": np.array(meta_timesteps, dtype=np.int64),
+                "sigmas": np.array(meta_sigmas, dtype=np.float32),
+            }
+
+            for k, vlist in feats.items():
+                # vlist: list of CPU tensors (len ~= number of captured steps * number_of_hooked_modules_calls)
+                np_list = [v.numpy() for v in vlist]
+                try:
+                    save_dict[k] = np.stack(np_list, axis=0)
+                except Exception:
+                    save_dict[k] = np.array(np_list, dtype=object)
+
+            # In DDP, avoid multiple ranks writing the same file
+            if torch.distributed.is_available() and torch.distributed.is_initialized():
+                rank = torch.distributed.get_rank()
+                feature_npz_path = feature_npz_path.replace(".npz", f"_rank{rank}.npz")
+
+            np.savez_compressed(feature_npz_path, **save_dict)
+            log.info(f"[feature-capture] saved npz: {feature_npz_path}")
 
         return samples
+
+    # original code version without feature save
+    # def generate_samples_from_batch(
+    #     self,
+    #     data_batch: dict,
+    #     guidance: float = 1.5,
+    #     seed: int = 1,
+    #     state_shape: tuple | None = None,
+    #     n_sample: int | None = 1,
+    #     is_negative_prompt: bool = False,
+    #     num_steps: int = 35,
+    #     condition_latent: Optional[torch.Tensor] = None,
+    #     num_condition_t: Optional[int] = None,
+    #     condition_augment_sigma: float = None,
+    #     add_input_frames_guidance: bool = False,
+    # ) -> Tensor:
+    #     """Generates video samples conditioned on input frames.
+
+    #     Args:
+    #         data_batch: Input data dictionary
+    #         guidance: Classifier-free guidance scale
+    #         seed: Random seed for reproducibility
+    #         state_shape: Shape of output tensor (defaults to model's state shape)
+    #         n_sample: Number of samples to generate (defaults to batch size)
+    #         is_negative_prompt: Whether to use negative prompting
+    #         num_steps: Number of denoising steps
+    #         condition_latent: Conditioning frames tensor (B,C,T,H,W)
+    #         num_condition_t: Number of frames to condition on
+    #         condition_augment_sigma: Noise level for condition augmentation
+    #         add_input_frames_guidance: Whether to apply guidance to input frames
+
+    #     Returns:
+    #         Generated video samples tensor
+    #     """
+    #     assert condition_latent is not None, "condition_latent should be provided"
+    #     condition, uncondition = self._get_conditions(
+    #         data_batch, is_negative_prompt, condition_latent, num_condition_t, add_input_frames_guidance
+    #     )
+
+    #     self.scheduler.set_timesteps(num_steps)
+    #     if n_sample is None:
+    #         n_sample = condition_latent.shape[0]
+    #     xt = torch.randn(size=(n_sample,) + tuple(state_shape), **self.tensor_kwargs) * self.scheduler.init_noise_sigma
+
+    #     to_cp = self.net.is_context_parallel_enabled
+    #     if to_cp:
+    #         xt = split_inputs_cp(x=xt, seq_dim=2, cp_group=self.net.cp_group)
+
+    #     for t in self.scheduler.timesteps:
+    #         self.scheduler._init_step_index(t)
+    #         sigma = self.scheduler.sigmas[self.scheduler.step_index].to(**self.tensor_kwargs)
+    #         # Form new noise from latent
+    #         xt = xt.to(**self.tensor_kwargs)
+    #         new_xt, latent, indicator = self._augment_noise_with_latent(
+    #             xt, sigma, condition, condition_augment_sigma=condition_augment_sigma, seed=seed
+    #         )
+    #         new_xt = new_xt.to(**self.tensor_kwargs)
+    #         new_xt_scaled = self.scheduler.scale_model_input(new_xt, timestep=t)
+    #         # Predict the noise residual
+    #         t = t.to(**self.tensor_kwargs)
+    #         net_output_cond = self.net(x=new_xt_scaled, timesteps=t, **condition.to_dict())
+    #         net_output_uncond = self.net(x=new_xt_scaled, timesteps=t, **uncondition.to_dict())
+    #         net_output = net_output_cond + guidance * (net_output_cond - net_output_uncond)
+    #         # Replace indicated output with latent
+    #         latent_unscaled = self._reverse_precondition_output(latent, xt=new_xt, sigma=sigma)
+    #         new_output = indicator * latent_unscaled + (1 - indicator) * net_output
+    #         # Compute the previous noisy sample x_t -> x_t-1
+    #         xt = self.scheduler.step(new_output, t, new_xt).prev_sample
+    #     samples = xt
+
+    #     if to_cp:
+    #         samples = cat_outputs_cp(samples, seq_dim=2, cp_group=self.net.cp_group)
+
+    #     return samples
 
     def _get_conditions(
         self,

@@ -246,6 +246,10 @@ bash run.sh multi [frame_index] forward outputs ./inputs [traj_mask] dino [combi
 bash run.sh multi [frame_index] backward outputs ./inputs [traj_mask] dino [combine_policy] [sigma_deg]
 ```
 
+```bash
+bash run.sh multi 48 forward outputs /cluster/project/cvg/students/shangwu/GEN3C/outputs/persistent intersection priority
+```
+
 1. `frame_index`: e.g. `96`
 2. `traj_mask`: `fill | intersection`
 3. `combine_policy`: `priority | soft`

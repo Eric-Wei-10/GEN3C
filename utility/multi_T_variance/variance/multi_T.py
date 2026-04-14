@@ -36,10 +36,13 @@ def _forward_visibility_mask_only(traj_dir: str, frame_index: int) -> torch.Tens
     """
     camera_npz = find_camera_npz(traj_dir)
     cam = np.load(camera_npz, allow_pickle=True)
+    
 
     w2c = cam["w2c"].astype(np.float32)                                 # (T, 4, 4)
     K = cam["K"].astype(np.float32)                                     # (T, 3, 3)
     depth0_np = cam["depth0"].astype(np.float32)                        # (H, W)
+    
+    import pdb; pdb.set_trace()
 
     T = w2c.shape[0]
     t = int(frame_index)
@@ -163,29 +166,35 @@ def run_multi_from_inputs_root(
         raise ValueError("combine_policy must be 'priority' or 'soft'.")
 
     # M_occ = M_bwd_combined & ~M_fwd_combined.
-    if occlude:
-        bwd_mask_bool = (combined_mask > 0.5)
+    H, W = combined_mask.shape
+    fwd_union = torch.zeros((H, W), dtype=torch.bool)
+    for m in per_traj_fwd_mask:
+        if m.shape != (H, W):
+            raise ValueError(f"Forward mask shape mismatch {m.shape} vs expected {(H,W)}.")
+        fwd_union |= m.to(torch.bool)
+    
+    bwd_mask_bool = (combined_mask > 0.5)
+    occ = bwd_mask_bool & (~fwd_union)
+        
+    # if occlude:
+    #     bwd_mask_bool = (combined_mask > 0.5)
 
-        # Union forward masks across trajectories.
-        H, W = bwd_mask_bool.shape
-        fwd_union = torch.zeros((H, W), dtype=torch.bool)
-        for m in per_traj_fwd_mask:
-            if m.shape != (H, W):
-                raise ValueError(f"Forward mask shape mismatch {m.shape} vs expected {(H,W)}.")
-            fwd_union |= m.to(torch.bool)
+    #     # Union forward masks across trajectories.
+    #     H, W = bwd_mask_bool.shape
+        
 
-        occ = bwd_mask_bool & (~fwd_union)
+    #     occ = bwd_mask_bool & (~fwd_union)
 
-        # Apply to outputs.
-        combined_mask = occ.float()
-        combined_var_map = combined_var_map * occ.unsqueeze(0).to(combined_var_map.dtype)
-        combined_var_scalar = combined_var_scalar * occ.to(combined_var_scalar.dtype)
-        source_idx = source_idx.clone()
-        source_idx[~occ] = -1
-        extra["source_trajectory_index"] = source_idx.detach().cpu().numpy()
-        extra["occlude"] = np.bool_(True)
-    else:
-        extra["occlude"] = np.bool_(False)
+    #     # Apply to outputs.
+    #     combined_mask = occ.float()
+    #     combined_var_map = combined_var_map * occ.unsqueeze(0).to(combined_var_map.dtype)
+    #     combined_var_scalar = combined_var_scalar * occ.to(combined_var_scalar.dtype)
+    #     source_idx = source_idx.clone()
+    #     source_idx[~occ] = -1
+    #     extra["source_trajectory_index"] = source_idx.detach().cpu().numpy()
+    #     extra["occlude"] = np.bool_(True)
+    # else:
+    #     extra["occlude"] = np.bool_(False)
 
     # Save per-trajectory results if requested.
     if save_per_trajectory:
@@ -214,21 +223,23 @@ def run_multi_from_inputs_root(
 
     # Save combined result (.npz).
     payload = dict(
-        mode=np.array(mode),
-        channel_type=np.array(channel_type),
-        frame_index=np.int64(frame_index),
+        # mode=np.array(mode),
+        # channel_type=np.array(channel_type),
+        # frame_index=np.int64(frame_index),
 
-        combine_policy=np.array(combine_policy),
-        traj_mask=np.array(traj_mask),
+        # combine_policy=np.array(combine_policy),
+        # traj_mask=np.array(traj_mask),
 
-        combined_var_map=combined_var_map.detach().cpu().numpy(),
-        combined_var_scalar=combined_var_scalar.detach().cpu().numpy(),
-        combined_mask=combined_mask.detach().cpu().numpy(),
+        variance_map=combined_var_map.detach().cpu().numpy(),
+        # rgb_variance_map=combined_var_scalar.detach().cpu().numpy(),
+        combined_mask=combined_mask.detach().cpu().numpy().astype(np.float32) > 0.5,
+        occlusion_mask=occ.detach().cpu().numpy(),
+        # visible_mask=fwd_union.numpy(),
 
-        trajectory_names=np.array(traj_names, dtype=object),
-        trajectory_theta_phi=np.array(traj_theta_phi, dtype=np.float32),
-        trajectory_orientation_distance_rad=np.array(per_traj_orien_d, dtype=np.float32),
+        # trajectory_names=np.array(traj_names, dtype=object),
+        # trajectory_theta_phi=np.array(traj_theta_phi, dtype=np.float32),
+        # trajectory_orientation_distance_rad=np.array(per_traj_orien_d, dtype=np.float32),
     )
-    payload.update(extra)
+    # payload.update(extra)
 
     np.savez(output_npz, **payload)

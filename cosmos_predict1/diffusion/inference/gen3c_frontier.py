@@ -111,6 +111,7 @@ def run_multi_seed(path_stem, model, seeds, prompt, theta_deg, phi_deg, w2c_tens
         model.generator.manual_seed(seed)
         misc.set_random_seed(seed)
         model.args.seed = seed
+        model.pipeline.seed = seed # pipeline的seed也应该改
         
         model.args.prompt = prompt
         model.args.video_save_name = f"video_{seed}"
@@ -128,6 +129,7 @@ def run_multi_seed(path_stem, model, seeds, prompt, theta_deg, phi_deg, w2c_tens
             view_camera_intrinsics=generated_intrinsics,
             fps=model.args.fps,
             return_estimated_depths=True,
+            image_name_stem=path_stem,
         )
 
         # 3. Process and Move to CPU immediately
@@ -215,14 +217,14 @@ def run_multi_traj_multi_seed(model, image_path, seeds, prompt, sample_angle=30,
         
     if not debug:
         # equi-angular sampling    
-        HFOV = 2 * math.atan(model.W / (2 * intrinsics_tensor[0, 0])) * (180.0 / math.pi)  # in degrees
-        # VFOV = 2 * math.atan(model.H / (2 * intrinsics_tensor[1, 1])) * (180.0 / math.pi)  # in degrees
+        # HFOV = 2 * math.atan(model.W / (2 * intrinsics_tensor[0, 0])) * (180.0 / math.pi)  # in degrees
+        # # VFOV = 2 * math.atan(model.H / (2 * intrinsics_tensor[1, 1])) * (180.0 / math.pi)  # in degrees
         theta_deg_list = [0]
-        for theta in range(sample_angle, math.ceil(HFOV/2), sample_angle):
-            theta_deg_list.append(theta)
-            theta_deg_list.append(-theta)
-        phi_deg_list = [0, 5, -5]
-        print(f"theta_deg_list: {theta_deg_list}")
+        # for theta in range(sample_angle, math.ceil(HFOV/2), sample_angle):
+        #     theta_deg_list.append(theta)
+        #     theta_deg_list.append(-theta)
+        phi_deg_list = [0]
+        print(f"theta_deg_list: {theta_deg_list}, phi_deg_list: {phi_deg_list}")
         
     else:
         # debug mode: only one trajectory
@@ -370,7 +372,7 @@ def main():
         for image_path in image_dir.iterdir():
             print(f"Processing image: {image_path}")
             if not check_path(image_path):
-                run_multi_traj_multi_seed(model, image_path, seeds_to_test, args.prompt, sample_angle=args.sample_angle, debug=True)
+                run_multi_traj_multi_seed(model, image_path, seeds_to_test, args.prompt, sample_angle=args.sample_angle)
     else:
         run_multi_traj_multi_seed(model, args.input_image, seeds_to_test, args.prompt, sample_angle=args.sample_angle)
     

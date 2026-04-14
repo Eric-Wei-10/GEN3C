@@ -20,7 +20,7 @@ def _is_combined(data):
     :param data: Loaded numpy data.
     :return: True if combined results, False otherwise.
     """
-    return ("combined_var_scalar" in data) or ("combined_var_map" in data)
+    return ("rgb_variance_map" in data) or ("variance_map" in data)
 
 
 def _convert_to_HW(arr):
@@ -104,7 +104,7 @@ def main():
 
     # Combined case.
     if _is_combined(data):
-        var = data["combined_var_scalar"].astype(np.float32) if "combined_var_scalar" in data else data["combined_var_map"].mean(axis=0).astype(np.float32)
+        var = data["rgb_variance_map"].astype(np.float32) if "rgb_variance_map" in data else data["variance_map"].mean(axis=0).astype(np.float32)
         cm = _convert_to_HW(data["combined_mask"]).astype(np.float32)
         cm_bool = cm > 0.5
 
@@ -115,7 +115,7 @@ def main():
         _save_im(
             var_disp,
             f"{args.out_prefix}_variance.png",
-            title=f"Combined variance (mode={mode}, t={t}, traj_mask={args.traj_mask}, channel={channel_type}, occlude={occlude})",
+            title=f"Combined variance",
             cbar_label="Variance",
             boundary_mask=cm_bool,
             cmap_name="viridis",
@@ -126,7 +126,7 @@ def main():
         _save_im(
             cm.astype(np.float32),
             f"{args.out_prefix}_coverage.png",
-            title=f"Combined coverage (traj_mask={str(data.get('traj_mask','?'))}, occlude={occlude})",
+            title=f"Combined coverage",
             cbar_label="mask",
             boundary_mask=cm_bool,
             cmap_name=None,

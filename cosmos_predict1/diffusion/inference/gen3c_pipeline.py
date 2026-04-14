@@ -115,6 +115,7 @@ class Gen3cPipeline(DiffusionVideo2WorldGenerationPipeline):
         rendered_warp_images: torch.Tensor,
         rendered_warp_masks: torch.Tensor,
         negative_prompt: Optional[str] = None,
+        image_name_stem: Optional[str] = None,
     ) -> Any:
         """Generate video from text prompt and optional image.
 
@@ -173,6 +174,7 @@ class Gen3cPipeline(DiffusionVideo2WorldGenerationPipeline):
             image_or_video_path=image_path,
             rendered_warp_images=rendered_warp_images,
             rendered_warp_masks=rendered_warp_masks,
+            image_name_stem=image_name_stem,
         )
         log.info("Finish generation")
 
@@ -193,6 +195,7 @@ class Gen3cPipeline(DiffusionVideo2WorldGenerationPipeline):
         rendered_warp_images: torch.Tensor,
         rendered_warp_masks: torch.Tensor,
         negative_prompt_embedding: Optional[torch.Tensor] = None,
+        image_name_stem: Optional[str] = None,
     ) -> Any:
         """Generate world representation with automatic model offloading.
 
@@ -216,7 +219,7 @@ class Gen3cPipeline(DiffusionVideo2WorldGenerationPipeline):
         if self.offload_network:
             self._load_network()
 
-        sample = self._run_model(prompt_embedding, condition_latent, rendered_warp_images, rendered_warp_masks, negative_prompt_embedding)
+        sample = self._run_model(prompt_embedding, condition_latent, rendered_warp_images, rendered_warp_masks, negative_prompt_embedding, image_name_stem=image_name_stem)
 
         if self.offload_network:
             self._offload_network()
@@ -235,6 +238,7 @@ class Gen3cPipeline(DiffusionVideo2WorldGenerationPipeline):
         rendered_warp_images: torch.Tensor,
         rendered_warp_masks: torch.Tensor,
         negative_prompt_embedding: torch.Tensor | None = None,
+        image_name_stem: Optional[str] = None,
     ) -> Any:
         data_batch, state_shape = get_video_batch(
             model=self.model,
@@ -258,6 +262,7 @@ class Gen3cPipeline(DiffusionVideo2WorldGenerationPipeline):
             seed=self.seed,
             condition_latent=condition_latent,
             num_input_frames=self.num_input_frames,
+            image_name_stem=image_name_stem,
         )
 
         return video
